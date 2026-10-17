@@ -3,6 +3,8 @@ use std::collections::BTreeSet;
 
 use serde::{Deserialize, Serialize};
 
+pub(super) const MAX_COMPONENTS: usize = 2048;
+
 #[derive(Clone, Serialize, Deserialize)]
 pub(super) struct Component {
     pub id: String,
@@ -89,8 +91,12 @@ impl Catalog {
         }
         let bytes = bytes.strip_prefix(b"\xef\xbb\xbf").unwrap_or(bytes);
         let catalog: Self = serde_json::from_slice(bytes).map_err(|e| format!("Catalogo JSON: {e}"))?;
-        if ![1, 2].contains(&catalog.version) || catalog.components.len() > 512 || catalog.library.is_empty() || catalog.library.len() > 32768 {
-            return Err("Catalogo non valido: versione 1 o 2, massimo 512 simboli e libreria DXF richiesta.".into());
+        if ![1, 2].contains(&catalog.version)
+            || catalog.components.len() > MAX_COMPONENTS
+            || catalog.library.is_empty()
+            || catalog.library.len() > 32768
+        {
+            return Err(format!("Catalogo non valido: versione 1 o 2, massimo {MAX_COMPONENTS} simboli e libreria DXF richiesta."));
         }
         let defaults = &catalog.defaults;
         if !(1..=1000).contains(&defaults.scale)
@@ -123,7 +129,7 @@ impl Catalog {
                 return Err(format!("Componente non valido o ID duplicato: {}. Posti ammessi: 1–7; massimo quattro livelli di categorie.", c.id));
             }
         }
-        if catalog.favorites.as_ref().is_some_and(|f| f.len() > 512 || f.iter().any(|id| id.is_empty() || id.len() > 255)) {
+        if catalog.favorites.as_ref().is_some_and(|f| f.len() > MAX_COMPONENTS || f.iter().any(|id| id.is_empty() || id.len() > 255)) {
             return Err("Elenco preferiti non valido.".into());
         }
         Ok(catalog)
@@ -196,7 +202,7 @@ pub(super) fn load_favorites(path: &str) -> Result<BTreeSet<String>, String> {
     }
     let bytes = read(&path.to_string_lossy(), 1024 * 1024)?;
     let favorites: Favorites = serde_json::from_slice(&bytes).map_err(|e| format!("Preferiti JSON: {e}"))?;
-    if favorites.version != 1 || favorites.favorites.len() > 512 || favorites.favorites.iter().any(|id| id.len() > 255) {
+    if favorites.version != 1 || favorites.favorites.len() > MAX_COMPONENTS || favorites.favorites.iter().any(|id| id.len() > 255) {
         return Err("File preferiti non valido.".into());
     }
     Ok(favorites.favorites)
@@ -266,6 +272,22 @@ mod tests {
         let c = json!({"id":"a","name":"Switch","block":"A","modules":1});
         assert!(Catalog::parse(&serde_json::to_vec(&json!({"version":1,"library":"x.dxf","components":[c,c]})).unwrap()).is_err());
         assert!(Catalog::parse(br#"{"version":1,"library":"x.dxf","components":[{"id":"a","name":"A","block":"A","modules":null}]}"#).is_err());
+    }
+
+    #[test]
+    fn full_library_accepts_654_symbols_and_favorites_but_keeps_a_hard_size_limit() {
+        let entries: Vec<_> = (0..654)
+            .map(|i| json!({"id":format!("s-{i}"),"name":format!("Symbol {i}"),"block":format!("B{i}"),"composer":false,"modules":0}))
+            .collect();
+        let mut catalog = config(json!(entries));
+        catalog.favorites = Some(catalog.components.iter().map(|c| c.id.clone()).collect());
+        let bytes = serde_json::to_vec(&catalog).unwrap();
+        assert_eq!(Catalog::parse(&bytes).unwrap().components.len(), 654);
+        assert_eq!(Catalog::parse(&bytes).unwrap().favorites.unwrap().len(), 654);
+        catalog.components = (0..=MAX_COMPONENTS)
+            .map(|i| Component { id: format!("s-{i}"), name: "Symbol".into(), block: "Geometry".into(), ..Default::default() })
+            .collect();
+        assert!(Catalog::parse(&serde_json::to_vec(&catalog).unwrap()).is_err());
     }
 
     #[test]

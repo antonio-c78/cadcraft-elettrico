@@ -187,8 +187,24 @@ Each card shows its symbol and a wrapped name, with the full name on hover.
 Clicking a card opens the existing attribute form. Back restores the category, query,
 thumbnail size and that view's stored scroll position. Browsing never saves or changes
 catalog properties. Duplicate opens the new variant's details. Save/backup behavior is
-unchanged. This trial still uses the twelve examples, before owner-approved bulk import.
+unchanged. The complete organized library can replace the initial examples without duplicate entries.
 
 `ui.elettrico.manager {action:"browse",category:[...],search:"...",favorites:false}` selects
 a gallery scope; `action:"back"` closes detail. Read replies include view, selected stable
 ID, category, query and visible IDs, allowing navigation to be exercised without dialogs.
+
+
+### Full organized library
+
+The active catalog supports up to 2,048 entries/favorites within the existing 1 MB JSON
+limit; preview libraries retain the 16 MB DXF limit. The duplication bound uses the same
+shared entry limit. The owner's complete import contains 654 organized general symbols,
+including the former examples once each. Known entries retain stable IDs, module counts,
+composer flags and favorites; other entries start outside the composer with zero/unreviewed
+occupancy. Names and category paths come from the organized manifest, including Varie.
+
+Private source DXFs, organized individual files and import manifests stay outside Git.
+Before activation, verify source file hashes and all native previews in a separate session.
+Store an exact backup of the old JSON, use a versioned DXF copy, then replace the active JSON
+only if its original hash still matches. This changes the catalog, never placed drawing
+blocks. Source files remain available for later review and reimport.

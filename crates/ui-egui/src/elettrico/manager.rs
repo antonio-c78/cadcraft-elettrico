@@ -38,14 +38,14 @@ impl State {
     }
 
     fn duplicate(&mut self) -> Result<String, String> {
-        if self.draft.components.len() >= 512 {
-            return Err("Limite di 512 simboli raggiunto.".into());
+        if self.draft.components.len() >= catalog::MAX_COMPONENTS {
+            return Err(format!("Limite di {} simboli raggiunto.", catalog::MAX_COMPONENTS));
         }
         let mut component = self.selected.and_then(|i| self.draft.components.get(i)).cloned().ok_or("Seleziona un simbolo.")?;
         // Identity is independent of display name, category and the shared source geometry.
         let mut sequence = self.draft.extra.get("next_variant_id").and_then(Value::as_u64).unwrap_or(1);
         let mut available = None;
-        for _ in 0..1024 {
+        for _ in 0..=catalog::MAX_COMPONENTS {
             let id = format!("variant-{sequence}");
             sequence = sequence.checked_add(1).ok_or("Limite identificativi raggiunto.")?;
             if self.draft.components.iter().all(|c| c.id != id) {
