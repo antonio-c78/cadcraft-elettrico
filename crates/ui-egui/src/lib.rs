@@ -21,6 +21,7 @@ pub mod control;
 pub mod credits;
 pub mod dialogs;
 pub mod docking;
+pub mod elettrico;
 pub mod hatchdlg;
 mod mtext_editor;
 pub mod spacemouse;
@@ -191,6 +192,7 @@ pub struct Services {
 }
 
 pub struct CadApp {
+    pub elettrico: elettrico::State,
     pub system_languages: Vec<String>,
     /// Whether the operating system shows animations, as the host reads it; `None` when the OS
     /// states nothing or the host cannot ask ([`animation`]).
@@ -248,6 +250,7 @@ pub struct CadApp {
 impl CadApp {
     pub fn new(session: Session, services: Services) -> Self {
         CadApp {
+            elettrico: elettrico::State::default(),
             system_languages: Vec::new(),
             system_animations: None,
             session,
@@ -637,6 +640,7 @@ impl CadApp {
             }
         });
         dialogs::show(self, ui.ctx());
+        elettrico::show(self, ui.ctx());
         palettes::patterns::prompt_picker(self, ui.ctx());
         closing::prompt(self, ui.ctx());
         autosave::show(self, ui.ctx());

@@ -6,7 +6,7 @@ use serde_json::{Value, json};
 use crate::CadApp;
 
 /// The top-level menus, in order.
-pub const MENUS: &[&str] = &["File", "Edit", "View", "Insert", "Format", "Tools", "Draw", "Dimension", "Modify", "Window", "Help"];
+pub const MENUS: &[&str] = &["File", "Edit", "View", "Insert", "Format", "Tools", "Draw", "Dimension", "Modify", "Elettrico", "Window", "Help"];
 
 /// File ▸ Open Recent: one `ui.recent.<n>` item per recent file, then Clear Recent Files.
 pub const OPEN_RECENT: &str = "Open Recent";
@@ -15,6 +15,8 @@ const RECENT_CLEAR: &str = "ui.recent.clear";
 
 /// UI-only commands: (id, label, menu path, shortcut).
 pub const UI_COMMANDS: &[(&str, &str, &[&str], Option<&str>)] = &[
+    ("ui.elettrico.compose", "Componi scatola...", &["Elettrico", "Componi scatola..."], Some("Cmd+Shift+E")),
+    ("ui.elettrico.settings", "Impostazioni...", &["Elettrico", "Impostazioni..."], None),
     ("ui.spacemouse", "3D Mouse...", &["Tools", "3D Mouse..."], None),
     ("ui.spacemouse.calibrate", "Calibrate 3D Mouse", &[], None),
     ("ui.spacemouse.navigate", "3D Mouse Navigation", &[], None),
@@ -83,6 +85,9 @@ pub fn run_ui_command(app: &mut CadApp, id: &str, params: &Value) -> Option<Resu
 }
 
 fn run_ui_command_inner(app: &mut CadApp, id: &str, params: &Value) -> Option<Result<Value, String>> {
+    if let Some(result) = crate::elettrico::route(app, id, params) {
+        return Some(result);
+    }
     if let Some(result) = crate::spacemouse::route(app, id, params) {
         return Some(result);
     }
@@ -597,6 +602,7 @@ pub fn shortcuts(app: &mut CadApp, ctx: &egui::Context) {
     let cmd = Modifiers::COMMAND;
     let cmd_shift = Modifiers::COMMAND | Modifiers::SHIFT;
     let pairs: &[(KeyboardShortcut, &str)] = &[
+        (sc(cmd_shift, Key::E), "ui.elettrico.compose"),
         (sc(cmd_shift, Key::A), "pickstyle"),
         (sc(cmd_shift, Key::Z), "redo"),
         (sc(cmd, Key::Z), "u"),
