@@ -9,6 +9,8 @@ use super::{
 };
 use crate::CadApp;
 
+mod gallery;
+
 #[derive(Default)]
 pub(super) struct State {
     open: bool,
@@ -18,6 +20,9 @@ pub(super) struct State {
     original: Vec<u8>,
     path: String,
     selected: Option<usize>,
+    browsing: Vec<String>,
+    favorites_only: bool,
+    thumbnail: f32,
     search: String,
     category: String,
     dirty: bool,
@@ -82,7 +87,7 @@ fn initialize(app: &mut CadApp) -> Result<(), String> {
     let favorites = catalog::load_favorites(&path)?;
     // Use precisely the saved file, not an unrelated library chosen temporarily in the composer.
     let mut state = State { open: app.elettrico.manager.open, initialized: true, draft, favorites, original, path, ..Default::default() };
-    state.select(0);
+    state.thumbnail = 140.0;
     app.elettrico.manager = state;
     Ok(())
 }
@@ -126,7 +131,7 @@ fn save(app: &mut CadApp) -> Result<Value, String> {
     Ok(json!({"saved":true,"components":count}))
 }
 
-/// `action`: open/read/select/update/duplicate/delete/save/reload. JSON calls never open a dialog.
+/// `action`: open/read/browse/back/select/update/duplicate/delete/save/reload.
 pub(super) fn command(app: &mut CadApp, params: &Value) -> Result<Value, String> {
     let action = params.get("action").and_then(Value::as_str).unwrap_or("open");
     if action == "reload" || !app.elettrico.manager.initialized {
@@ -137,6 +142,24 @@ pub(super) fn command(app: &mut CadApp, params: &Value) -> Result<Value, String>
             app.elettrico.manager.open = params.get("open").and_then(Value::as_bool).unwrap_or(true);
         }
         "read" | "reload" => {}
+        "back" => {
+            app.elettrico.manager.selected = None;
+            app.elettrico.manager.delete_confirmation = false;
+        }
+        "browse" => {
+            let path: Vec<String> = serde_json::from_value(params.get("category").cloned().unwrap_or(json!([]))).map_err(|e| e.to_string())?;
+            if path.len() > 4 || path.iter().any(|s| s.is_empty() || s.len() > 80) {
+                return Err("Categoria non valida.".into());
+            }
+            let state = &mut app.elettrico.manager;
+            state.browsing = path;
+            state.favorites_only = params.get("favorites").and_then(Value::as_bool).unwrap_or(false);
+            state.selected = None;
+            state.delete_confirmation = false;
+            if let Some(search) = params.get("search").and_then(Value::as_str) {
+                state.search = search.chars().take(255).collect();
+            }
+        }
         "save" => return save(app),
         "select" | "update" | "duplicate" | "delete" => {
             let state = &mut app.elettrico.manager;
@@ -178,34 +201,10 @@ pub(super) fn command(app: &mut CadApp, params: &Value) -> Result<Value, String>
         _ => return Err("Azione catalogo non riconosciuta.".into()),
     }
     let state = &app.elettrico.manager;
-    Ok(json!({"open":state.open,"dirty":state.dirty,"components":state.draft.components,"favorites":state.favorites}))
-}
-
-fn tree(ui: &mut egui::Ui, state: &mut State, prefix: &[String]) {
-    let query = state.search.trim().to_lowercase();
-    let matches =
-        |c: &catalog::Component| query.is_empty() || c.name.to_lowercase().contains(&query) || c.category.join(" / ").to_lowercase().contains(&query);
-    let children: BTreeSet<_> = state
-        .draft
-        .components
-        .iter()
-        .filter(|c| matches(c) && c.category.starts_with(prefix))
-        .filter_map(|c| c.category.get(prefix.len()).cloned())
-        .collect();
-    let indices: Vec<_> = state.draft.components.iter().enumerate().filter(|(_, c)| matches(c) && c.category == prefix).map(|(i, _)| i).collect();
-    for i in indices {
-        if let Some(c) = state.draft.components.get(i) {
-            let label = format!("{}{}", if state.favorites.contains(&c.id) { "★ " } else { "" }, c.name);
-            if ui.selectable_label(state.selected == Some(i), label).clicked() {
-                state.select(i);
-            }
-        }
-    }
-    for child in children {
-        let mut path = prefix.to_vec();
-        path.push(child.clone());
-        egui::CollapsingHeader::new(child).id_salt(&path).default_open(true).show(ui, |ui| tree(ui, state, &path));
-    }
+    Ok(json!({"open":state.open,"dirty":state.dirty,"components":state.draft.components,"favorites":state.favorites,
+        "view":if state.selected.is_some(){"detail"}else{"gallery"},"category":state.browsing,"search":state.search,
+        "visible":gallery::indices(state).iter().filter_map(|i|state.draft.components.get(*i).map(|c|&c.id)).collect::<Vec<_>>(),
+        "selected":state.selected.and_then(|i|state.draft.components.get(i)).map(|c|&c.id)}))
 }
 
 pub(super) fn show(app: &mut CadApp, ctx: &egui::Context) {
@@ -216,59 +215,37 @@ pub(super) fn show(app: &mut CadApp, ctx: &egui::Context) {
     let mut open = state.open;
     let mut action = None;
     egui::Window::new("Gestione catalogo simboli — Elettrico")
-        .id(egui::Id::new("elettrico.manager"))
+        .id(egui::Id::new("elettrico.manager.gallery"))
         .open(&mut open)
-        .default_width(880.0)
-        .min_width(740.0)
+        .default_width(1080.0)
+        .min_width(880.0)
+        .default_height(720.0)
+        .max_height(740.0)
+        .vscroll(true)
         .show(ctx, |ui| {
             ui.label("Categorie e proprietà dei simboli. Le modifiche saranno applicate quando salvi il catalogo.");
             ui.separator();
-            ui.columns(2, |cols| {
-                if let Some(ui) = cols.get_mut(0) {
-                    ui.add(egui::TextEdit::singleline(&mut state.search).hint_text("Cerca simbolo o categoria..."));
-                    egui::ScrollArea::vertical().id_salt("catalog.tree").max_height(420.0).show(ui, |ui| tree(ui, &mut state, &[]));
-                }
-                if let Some(ui) = cols.get_mut(1) {
-                    let selected = state.selected;
-                    let list = selected
-                        .and_then(|i| state.draft.components.get(i))
-                        .and_then(|c| app.elettrico.catalog.components.iter().position(|v| v.block == c.block))
-                        .and_then(|i| app.elettrico.library.as_ref().and_then(|l| l.symbol(i)));
-                    preview::show_symbol(ui, list);
-                    if let Some(c) = selected.and_then(|i| state.draft.components.get_mut(i)) {
-                        ui.label("Nome del simbolo");
-                        state.dirty |= ui.text_edit_singleline(&mut c.name).changed();
-                        ui.label("Categoria / Sottocategoria (fino a 4 livelli)");
-                        if ui.text_edit_singleline(&mut state.category).changed() {
-                            c.category = state.category.split('/').map(str::trim).filter(|s| !s.is_empty()).take(5).map(str::to_string).collect();
-                            state.dirty = true;
+            ui.horizontal_top(|ui| {
+                ui.allocate_ui_with_layout(egui::vec2(220.0, 490.0), egui::Layout::top_down(egui::Align::Min), |ui| {
+                    ui.set_max_width(220.0);
+                    gallery::sidebar(ui, &mut state);
+                });
+                ui.add_space(8.0);
+                ui.vertical(|ui| {
+                    ui.set_min_width(580.0);
+                    if state.selected.is_some() {
+                        if ui.button("← Torna alla galleria").clicked() {
+                            state.selected = None;
+                            state.delete_confirmation = false;
                         }
-                        state.dirty |= ui.checkbox(&mut c.composer, "Visibile nel compositore").changed();
-                        if c.composer {
-                            c.modules = c.modules.max(1);
-                            ui.horizontal(|ui| {
-                                ui.label("Moduli occupati");
-                                state.dirty |= ui.add(egui::DragValue::new(&mut c.modules).range(1..=7)).changed();
-                            });
+                        if state.selected.is_some() {
+                            ui.heading("Attributi del simbolo");
+                            detail(ui, &mut state, &app.elettrico);
                         }
-                        state.dirty |= ui.checkbox(&mut c.standalone, "Disponibile per inserimento singolo").changed();
-                        let mut favorite = state.favorites.contains(&c.id);
-                        if ui.checkbox(&mut favorite, "★ Preferito").changed() {
-                            if favorite {
-                                state.favorites.insert(c.id.clone());
-                            } else {
-                                state.favorites.remove(&c.id);
-                            }
-                            state.dirty = true;
-                        }
-                        ui.label("Note");
-                        state.dirty |= ui.add(egui::TextEdit::multiline(&mut c.notes).desired_rows(2)).changed();
-                        ui.small(format!("Blocco: {}", c.block));
-                        ui.small(format!("ID: {}", c.id));
                     } else {
-                        ui.label("Seleziona un simbolo nell'elenco.");
+                        gallery::sheet(ui, &mut state, &app.elettrico);
                     }
-                }
+                });
             });
             ui.separator();
             ui.horizontal(|ui| {
@@ -317,9 +294,76 @@ pub(super) fn show(app: &mut CadApp, ctx: &egui::Context) {
     }
 }
 
+fn detail(ui: &mut egui::Ui, state: &mut State, live: &super::State) {
+    let selected = state.selected;
+    let list = selected
+        .and_then(|i| state.draft.components.get(i))
+        .and_then(|c| live.catalog.components.iter().position(|v| v.block == c.block))
+        .and_then(|i| live.library.as_ref().and_then(|l| l.symbol(i)));
+    preview::show_symbol(ui, list);
+    if let Some(c) = selected.and_then(|i| state.draft.components.get_mut(i)) {
+        ui.label("Nome del simbolo");
+        state.dirty |= ui.text_edit_singleline(&mut c.name).changed();
+        ui.label("Categoria / Sottocategoria (fino a 4 livelli)");
+        if ui.text_edit_singleline(&mut state.category).changed() {
+            c.category = state.category.split('/').map(str::trim).filter(|s| !s.is_empty()).take(5).map(str::to_string).collect();
+            state.dirty = true;
+        }
+        state.dirty |= ui.checkbox(&mut c.composer, "Visibile nel compositore").changed();
+        if c.composer {
+            c.modules = c.modules.max(1);
+            ui.horizontal(|ui| {
+                ui.label("Moduli occupati");
+                state.dirty |= ui.add(egui::DragValue::new(&mut c.modules).range(1..=7)).changed();
+            });
+        }
+        state.dirty |= ui.checkbox(&mut c.standalone, "Disponibile per inserimento singolo").changed();
+        let mut favorite = state.favorites.contains(&c.id);
+        if ui.checkbox(&mut favorite, "★ Preferito").changed() {
+            if favorite {
+                state.favorites.insert(c.id.clone());
+            } else {
+                state.favorites.remove(&c.id);
+            }
+            state.dirty = true;
+        }
+        ui.label("Note");
+        state.dirty |= ui.add(egui::TextEdit::multiline(&mut c.notes).desired_rows(2)).changed();
+        ui.small(format!("Blocco: {}", c.block));
+        ui.small(format!("ID: {}", c.id));
+    } else {
+        ui.label("Seleziona un simbolo nell'elenco.");
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn category_gallery_includes_descendants_and_back_preserves_the_browsing_context() {
+        let mut app = CadApp::new(cadcraft_engine::Session::new(), crate::Services::default());
+        app.elettrico.manager.initialized = true;
+        app.elettrico.manager.draft = Catalog::parse(
+            br#"{"version":2,"library":"x.dxf","components":[
+            {"id":"a","name":"Switch","block":"A","modules":1,"category":["Controls"]},
+            {"id":"b","name":"Socket","block":"B","modules":2,"category":["Sockets","Power"]},
+            {"id":"c","name":"Data socket","block":"C","modules":1,"category":["Sockets","Data"]},
+            {"id":"d","name":"Other socket","block":"D","modules":1,"category":["Sockets special"]}]}"#,
+        )
+        .unwrap();
+        let view = command(&mut app, &json!({"action":"browse","category":["Sockets"],"search":"socket"})).unwrap();
+        assert_eq!(view["visible"], json!(["c", "b"]));
+        command(&mut app, &json!({"action":"select","id":"b"})).unwrap();
+        let back = command(&mut app, &json!({"action":"back"})).unwrap();
+        assert_eq!(back["view"], "gallery");
+        assert_eq!(back["category"], json!(["Sockets"]));
+        assert_eq!(back["search"], "socket");
+        assert!(!app.elettrico.manager.dirty);
+        app.elettrico.manager.favorites.insert("b".into());
+        let favorites = command(&mut app, &json!({"action":"browse","favorites":true,"search":""})).unwrap();
+        assert_eq!(favorites["visible"], json!(["b"]));
+    }
+
     #[test]
     fn draft_commands_are_atomic_and_do_not_open_windows_or_change_drawings() {
         let mut app = CadApp::new(cadcraft_engine::Session::new(), crate::Services::default());

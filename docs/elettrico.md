@@ -174,3 +174,21 @@ or restart. End an active drawing command or box edit before saving.
 `duplicate`, `delete`, `save`, and `reload`. Mutations target `id`; `update` accepts `fields`
 (name, category, modules, composer, standalone, notes) and optional `favorite`. These act on
 the draft until explicit `save`. The normal menu opens the window.
+
+### Visual category gallery
+
+The manager opens with a contact sheet and a category-only sidebar. Selecting a parent
+category includes all descendant categories; All and Favorites provide alternate views.
+Search filters within the current scope by display name, source block or category path.
+A thumbnail-size slider changes the responsive column count. Only visible grid rows are
+painted, using the existing cached white vector previews rather than reloading DXF files.
+Each card shows its symbol and a wrapped name, with the full name on hover.
+
+Clicking a card opens the existing attribute form. Back restores the category, query,
+thumbnail size and that view's stored scroll position. Browsing never saves or changes
+catalog properties. Duplicate opens the new variant's details. Save/backup behavior is
+unchanged. This trial still uses the twelve examples, before owner-approved bulk import.
+
+`ui.elettrico.manager {action:"browse",category:[...],search:"...",favorites:false}` selects
+a gallery scope; `action:"back"` closes detail. Read replies include view, selected stable
+ID, category, query and visible IDs, allowing navigation to be exercised without dialogs.

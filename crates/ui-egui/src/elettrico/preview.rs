@@ -108,6 +108,10 @@ fn fit_symbol(bounds: Bounds2, slot: Rect, unit: f32) -> Option<Xf> {
 
 pub(super) fn show_symbol(ui: &mut egui::Ui, list: Option<&DisplayList>) {
     let (rect, _) = ui.allocate_exact_size(vec2(ui.available_width().max(100.0), 150.0), egui::Sense::hover());
+    paint_symbol(ui, rect, list);
+}
+
+pub(super) fn paint_symbol(ui: &egui::Ui, rect: Rect, list: Option<&DisplayList>) {
     let painter = ui.painter_at(rect);
     let background = crate::theme::Tokens::DARK.canvas;
     painter.rect_filled(rect, 3.0, background);
