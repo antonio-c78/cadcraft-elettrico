@@ -20,6 +20,7 @@ pub(super) struct State {
     original: Vec<u8>,
     path: String,
     selected: Option<usize>,
+    insertion: bool,
     browsing: Vec<String>,
     favorites_only: bool,
     thumbnail: f32,
@@ -140,6 +141,9 @@ pub(super) fn command(app: &mut CadApp, params: &Value) -> Result<Value, String>
     match action {
         "open" => {
             app.elettrico.manager.open = params.get("open").and_then(Value::as_bool).unwrap_or(true);
+            if app.elettrico.manager.open {
+                app.elettrico.symbol.open = false;
+            }
         }
         "read" | "reload" => {}
         "back" => {
@@ -336,9 +340,35 @@ fn detail(ui: &mut egui::Ui, state: &mut State, live: &super::State) {
     }
 }
 
+pub(super) fn insertion_browser(live: &super::State) -> State {
+    State { draft: live.catalog.clone(), favorites: live.favorites.clone(), thumbnail: 140.0, insertion: true, ..Default::default() }
+}
+
+pub(super) fn hide(state: &mut State) {
+    state.open = false;
+}
+
+pub(super) fn browser(ui: &mut egui::Ui, state: &mut State, live: &super::State) -> Option<String> {
+    ui.horizontal_top(|ui| {
+        ui.allocate_ui_with_layout(egui::vec2(220.0, 490.0), egui::Layout::top_down(egui::Align::Min), |ui| gallery::sidebar(ui, state));
+        ui.add_space(8.0);
+        ui.vertical(|ui| {
+            ui.set_min_width(580.0);
+            gallery::sheet(ui, state, live);
+        });
+    });
+    state.selected.take().and_then(|i| state.draft.components.get(i)).map(|c| c.id.clone())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn insertion_browser_hides_symbols_not_enabled_for_standalone_use() {
+        let draft=Catalog::parse(br#"{"version":2,"library":"x.dxf","components":[{"id":"a","name":"A","block":"A","modules":1,"standalone":false},{"id":"b","name":"B","block":"B","modules":0,"composer":false}]}"#).unwrap();
+        let state = State { draft, insertion: true, ..Default::default() };
+        assert_eq!(gallery::indices(&state), vec![1]);
+    }
     #[test]
     fn category_gallery_includes_descendants_and_back_preserves_the_browsing_context() {
         let mut app = CadApp::new(cadcraft_engine::Session::new(), crate::Services::default());

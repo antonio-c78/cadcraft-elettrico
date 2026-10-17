@@ -10,6 +10,7 @@ use super::{CommandSpec, bad};
 use crate::{Accept, Input, Interactive, Prompt, Result, Session, Step};
 
 mod edit;
+mod symbol;
 
 #[derive(Clone, Deserialize, Serialize)]
 pub struct Component {
@@ -27,12 +28,13 @@ pub struct Composition {
 }
 
 pub struct Placement {
+    pub symbol: Option<symbol::Symbol>,
     pub composition: Composition,
     pub point: Option<Vec2>,
     pub rotation: f64,
     /// 0: above, 1: below, 2: right, 3: left, in drawing coordinates.
     pub side: u8,
-    /// 0: pick point, 1: rotation, 2: label position.
+    /// 0: pick point, 1: rotation, 2: label position, 3: optional height for standalone symbols.
     pub phase: u8,
     pub error: Option<String>,
     uid: u64,
@@ -63,10 +65,11 @@ pub fn specs() -> Vec<CommandSpec> {
             if !s.electrical.as_ref().is_some_and(|p| p.phase == 0 && s.state().is_ok_and(|st| st.uid == p.uid)) {
                 return Err(bad("electrical.place", "Prepare a composition first"));
             }
-            Ok(Box::new(Place))
+            Ok(Box::new(Place { symbol: s.electrical.as_ref().is_some_and(Placement::is_symbol) }))
         }),
     ];
     commands.extend(edit::specs());
+    commands.extend(symbol::specs());
     commands
 }
 
@@ -103,6 +106,7 @@ fn prepare(s: &mut Session, p: &Value) -> Result<Value> {
         return Err(bad("electrical.prepare", "Percorso copia di sicurezza troppo lungo."));
     }
     s.electrical = Some(Placement {
+        symbol: None,
         composition: c,
         point: None,
         rotation: 0.0,
@@ -141,10 +145,29 @@ fn insert(s: &mut Session, p: &Value) -> Result<Value> {
 fn options(s: &mut Session, p: &Value) -> Result<Value> {
     let rotation = p.get("rotation").and_then(Value::as_f64);
     let side = p.get("side").and_then(Value::as_u64);
+    let height = p
+        .get("height_cm")
+        .map(|v| {
+            if v.is_null() {
+                Ok(None)
+            } else {
+                v.as_f64()
+                    .filter(|h| h.is_finite() && (0.0..=10000.0).contains(h))
+                    .map(Some)
+                    .ok_or_else(|| bad("electrical.options", "Altezza non valida."))
+            }
+        })
+        .transpose()?;
     if rotation.is_some_and(|v| !v.is_finite() || v.abs() > 360000.0) || side.is_some_and(|v| v > 3) {
         return Err(bad("electrical.options", "Rotazione o posizione non valida."));
     }
     let placement = s.electrical.as_mut().ok_or_else(|| bad("electrical.options", "Nessuna scatola preparata."))?;
+    if let Some(height) = height {
+        if placement.symbol.is_none() {
+            return Err(bad("electrical.options", "Altezza disponibile qui solo per simboli singoli."));
+        }
+        placement.composition.installation_height_cm = height;
+    }
     if let Some(v) = rotation {
         placement.rotation = v.rem_euclid(360.0);
     }
@@ -163,6 +186,10 @@ fn line(a: Vec2, b: Vec2) -> EntityKind {
 }
 
 fn read_geometry(_path: &str, _c: &Composition) -> Result<Vec<EntityKind>> {
+    geometry(&read_drawing(_path)?, _c)
+}
+
+fn read_drawing(_path: &str) -> Result<cadcraft_doc::Drawing> {
     #[cfg(not(target_arch = "wasm32"))]
     {
         use std::io::Read;
@@ -177,7 +204,7 @@ fn read_geometry(_path: &str, _c: &Composition) -> Result<Vec<EntityKind>> {
         }
         let hooks = super::file::io().ok_or_else(|| bad("electrical.prepare", "Lettore DXF non disponibile."))?;
         let drawing = (hooks.read)(&bytes, _path).map_err(|e| bad("electrical.prepare", e))?;
-        geometry(&drawing, _c)
+        Ok(drawing)
     }
     #[cfg(target_arch = "wasm32")]
     Err(bad("electrical.prepare", "La libreria locale richiede la versione desktop."))
@@ -246,6 +273,9 @@ fn geometry(d: &cadcraft_doc::Drawing, c: &Composition) -> Result<Vec<EntityKind
 }
 
 impl Placement {
+    pub fn is_symbol(&self) -> bool {
+        self.symbol.is_some()
+    }
     pub fn is_edit(&self) -> bool {
         self.target.is_some()
     }
@@ -260,7 +290,13 @@ impl Placement {
             let f = self.composition.factor;
             let w = f64::from(self.composition.capacity) * 3.0 * f;
             let points = [Vec2::ZERO, Vec2::new(w, 0.0), Vec2::new(w, 5.0 * f), Vec2::new(0.0, 5.0 * f)].map(|p| rotation.apply(p));
-            let bounds = Bounds2::from_points(points);
+            let bounds = if self.symbol.is_some() {
+                Bounds2::from_points(
+                    kinds.iter().filter_map(|k| if let EntityKind::Line(l) = k { Some([l.a.xy(), l.b.xy()]) } else { None }).flatten(),
+                )
+            } else {
+                Bounds2::from_points(points)
+            };
             let center = bounds.center();
             let (p, halign, valign) = match self.side {
                 1 => (Vec2::new(center.x, bounds.min.y - f), HAlign::Center, VAlign::Top),
@@ -305,12 +341,13 @@ fn commit(s: &mut Session) -> Result<Value> {
             return Err(bad("electrical.place", "Attiva e sblocca il layer della scatola."));
         }
     }
-    if d.layers.iter().any(|l| l.name.eq_ignore_ascii_case("EL_SCATOLE") && (l.locked || !l.on || l.frozen)) {
-        return Err(bad("electrical.place", "Attiva e sblocca il layer EL_SCATOLE."));
+    let layer = if p.is_symbol() { "EL_SIMBOLI" } else { "EL_SCATOLE" };
+    if d.layers.iter().any(|l| l.name.eq_ignore_ascii_case(layer) && (l.locked || !l.on || l.frozen)) {
+        return Err(bad("electrical.place", format!("Attiva e sblocca il layer {layer}.")));
     }
-    d.ensure_layer("EL_SCATOLE");
+    d.ensure_layer(layer);
     let name = (1..=100000)
-        .map(|n| format!("CC_SCATOLA_{n}"))
+        .map(|n| format!("{}_{n}", if p.is_symbol() { "CC_SIMBOLO" } else { "CC_SCATOLA" }))
         .find(|n| d.block(n).is_none())
         .ok_or_else(|| bad("electrical.place", "Troppi blocchi scatola."))?;
     let mut block = Block::new(&name);
@@ -321,9 +358,11 @@ fn commit(s: &mut Session) -> Result<Value> {
     }
     d.blocks.insert(name.clone(), Arc::new(block));
     let side = ["sopra", "sotto", "destra", "sinistra"].get(usize::from(p.side)).unwrap_or(&"sopra");
-    let metadata = json!({"version":1,"composition":p.composition,"rotation":p.rotation,"installation_label_position":side}).to_string();
-    let mut common = Common { layer: "EL_SCATOLE".into(), color: cadcraft_color::Color::Index(7), ..Default::default() };
-    common.xdata.push(RawTag { code: 1001, value: "CC_COMPOSITORE".into() });
+    let metadata = if let Some(symbol)=&p.symbol {
+        json!({"version":1,"symbol":symbol,"rotation":p.rotation,"installation_height_cm":p.composition.installation_height_cm,"installation_label_position":side})
+    }else{json!({"version":1,"composition":p.composition,"rotation":p.rotation,"installation_label_position":side})}.to_string();
+    let mut common = Common { layer: layer.into(), color: cadcraft_color::Color::Index(7), ..Default::default() };
+    common.xdata.push(RawTag { code: 1001, value: if p.is_symbol() { "CC_SIMBOLO" } else { "CC_COMPOSITORE" }.into() });
     let mut chunk = String::new();
     for ch in metadata.chars() {
         if chunk.len() + ch.len_utf8() > 200 {
@@ -397,7 +436,9 @@ fn backup(_d: &cadcraft_doc::Drawing, _directory: Option<&str>) -> Result<String
     Err(bad("electrical.place", "La copia di sicurezza richiede la versione desktop."))
 }
 
-struct Place;
+struct Place {
+    symbol: bool,
+}
 impl Interactive for Place {
     fn begin(&mut self, s: &mut Session) -> Result<Step> {
         if let Some(p) = &mut s.electrical
@@ -409,12 +450,16 @@ impl Interactive for Place {
         Ok(Step::Continue)
     }
     fn name(&self) -> &'static str {
-        "electrical.place"
+        if self.symbol { "electrical.symbol.place" } else { "electrical.place" }
     }
     fn prompt(&self, s: &Session) -> Prompt {
         let picking = s.electrical.as_ref().is_some_and(|p| p.phase == 0);
         Prompt::new(
-            if picking { "Scegli il punto della scatola" } else { "Completa la finestra di inserimento" },
+            if picking {
+                if s.electrical.as_ref().is_some_and(Placement::is_symbol) { "Scegli il punto del simbolo" } else { "Scegli il punto della scatola" }
+            } else {
+                "Completa la finestra di inserimento"
+            },
             if picking { Accept::POINT } else { Accept { enter: true, ..Default::default() } },
         )
     }
@@ -425,12 +470,15 @@ impl Interactive for Place {
                 p.point = Some(at);
                 p.phase = 1;
             }
-            Input::Enter if p.phase == 1 && p.composition.installation_height_cm.is_some() => {
+            Input::Enter if p.phase == 1 && p.is_symbol() => {
+                p.phase = 3;
+            }
+            Input::Enter if (p.phase == 1 || p.phase == 3) && p.composition.installation_height_cm.is_some() => {
                 p.phase = 2;
             }
             Input::Enter if p.phase > 0 => match commit(s) {
                 Ok(result) => {
-                    s.echo(format!("Scatola inserita. Copia di sicurezza: {}", result["backup"].as_str().unwrap_or("")));
+                    s.echo(format!("Elemento inserito. Copia di sicurezza: {}", result["backup"].as_str().unwrap_or("")));
                     s.electrical = None;
                     return Ok(Step::Done);
                 }

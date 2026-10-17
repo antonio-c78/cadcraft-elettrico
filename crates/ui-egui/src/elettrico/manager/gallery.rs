@@ -10,7 +10,8 @@ pub(super) fn indices(state: &State) -> Vec<usize> {
         .iter()
         .enumerate()
         .filter(|(_, c)| {
-            c.category.starts_with(&state.browsing)
+            (!state.insertion || c.standalone)
+                && c.category.starts_with(&state.browsing)
                 && (!state.favorites_only || state.favorites.contains(&c.id))
                 && (query.is_empty()
                     || c.name.to_lowercase().contains(&query)
@@ -43,12 +44,17 @@ pub(super) fn sidebar(ui: &mut egui::Ui, state: &mut State) {
 }
 
 fn tree(ui: &mut egui::Ui, state: &mut State, prefix: &[String]) {
-    let children: std::collections::BTreeSet<_> =
-        state.draft.components.iter().filter(|c| c.category.starts_with(prefix)).filter_map(|c| c.category.get(prefix.len()).cloned()).collect();
+    let children: std::collections::BTreeSet<_> = state
+        .draft
+        .components
+        .iter()
+        .filter(|c| (!state.insertion || c.standalone) && c.category.starts_with(prefix))
+        .filter_map(|c| c.category.get(prefix.len()).cloned())
+        .collect();
     for child in children {
         let mut path = prefix.to_vec();
         path.push(child.clone());
-        let count = state.draft.components.iter().filter(|c| c.category.starts_with(&path)).count();
+        let count = state.draft.components.iter().filter(|c| (!state.insertion || c.standalone) && c.category.starts_with(&path)).count();
         let id = ui.make_persistent_id(("catalog.category", &path));
         egui::collapsing_header::CollapsingState::load_with_default_open(ui.ctx(), id, true)
             .show_header(ui, |ui| {
@@ -78,7 +84,11 @@ pub(super) fn sheet(ui: &mut egui::Ui, state: &mut State, live: &elettrico::Stat
         ui.add(egui::Slider::new(&mut state.thumbnail, 100.0..=200.0).text("Miniature").show_value(false));
     });
     let indices = indices(state);
-    ui.label(format!("{} simboli · clicca un'anteprima per modificare gli attributi", indices.len()));
+    ui.label(format!(
+        "{} simboli · {}",
+        indices.len(),
+        if state.insertion { "clicca un'anteprima per inserirla nel disegno" } else { "clicca un'anteprima per modificare gli attributi" }
+    ));
     if indices.is_empty() {
         ui.label("Nessun simbolo corrisponde alla ricerca.");
         return;

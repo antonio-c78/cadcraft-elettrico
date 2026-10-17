@@ -157,9 +157,8 @@ Deleting only removes the catalog entry, not source geometry or existing drawing
 Closing keeps the unsaved draft; explicit reload discards it.
 
 Two independent flags, `composer` and `standalone`, default to true for version-1 catalogs.
-Composer-only filtering is active immediately after saving. Standalone availability is
-stored for the next standalone-insertion menu implementation; this stage does not yet
-provide that insertion menu or import folders. A standalone-only entry may have zero
+Composer-only filtering is active immediately after saving. Standalone availability filters the insertion gallery. Folder import remains an explicit
+preparation step. A standalone-only entry may have zero
 modules. All composer entries still require reviewed occupancy of 1–7 modules.
 
 Save validates the complete draft, source geometry and remapping of any current composition
@@ -208,3 +207,34 @@ Before activation, verify source file hashes and all native previews in a separa
 Store an exact backup of the old JSON, use a versioned DXF copy, then replace the active JSON
 only if its original hash still matches. This changes the catalog, never placed drawing
 blocks. Source files remain available for later review and reimport.
+
+
+## Standalone symbol insertion
+
+Elettrico → Inserisci simbolo reuses the manager category/gallery renderer and cached
+white vector previews, but filters by `standalone`. Clicking a card starts insertion,
+never the attribute form. The source catalog and any unsaved manager draft are preserved.
+The gallery's Settings copies composer print scale, size percentage and model units each
+time it is opened from the menu. Changes then stay local to standalone insertion; a reset
+button copies current composer values again. Size percentages run from 5 to 300 in steps
+of 5. Returning after insertion preserves the current gallery browsing context/settings.
+
+Inside CADCraft: pick the anchor point, confirm orientation, enter optional height in cm,
+then choose above/below/right/left with a live preview and confirm. Blank height skips the
+label-position step. The height label stays horizontal during placement. Dimensions fit
+source geometry proportionally into the catalog paper width/height (default 8 mm each),
+using the catalog normalized anchor (default center). No box frame or slot separators
+are added. Only the final confirmation creates one block on EL_SIMBOLI, preceded by a
+DXF backup and covered by one Undo. Cancel before confirmation changes no drawing.
+
+CC_SIMBOLO XDATA stores catalog identity, name, source block/category, scale, size, anchor,
+rotation and optional height/label side for later editing, legends and material schedules.
+Existing box insertion/editing remains on its original workflow and CC_COMPOSITORE schema.
+Symbol-specific editing and schedules are future commands, not part of this insertion UI.
+
+Dialog-free commands: electrical.symbol.prepare {library,symbol,backup_dir?}, followed by
+interactive electrical.symbol.place; or electrical.symbol.insert with at:[x,y], rotation,
+height_cm and side. The symbol object requires id,name,block,category,factor,width_mm,
+height_mm,anchor:[x,y]. electrical.options controls rotation/side and symbol height_cm
+(null clears it). UI commands ui.elettrico.symbols and ui.elettrico.symbol.insert {id}
+use the active external catalog. Settings JSON uses scale,size_percent,units (mm or m).

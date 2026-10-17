@@ -8,6 +8,7 @@ mod catalog;
 mod edit;
 mod manager;
 mod preview;
+mod symbol;
 
 fn catalog_environment() -> Option<String> {
     #[cfg(not(target_arch = "wasm32"))]
@@ -39,6 +40,7 @@ pub struct State {
     editing: edit::State,
     replacing: Option<usize>,
     manager: manager::State,
+    symbol: symbol::State,
 }
 
 impl Default for State {
@@ -62,6 +64,7 @@ impl Default for State {
             editing: edit::State::default(),
             replacing: None,
             manager: manager::State::default(),
+            symbol: symbol::State::default(),
         }
     }
 }
@@ -95,10 +98,14 @@ impl State {
 }
 
 pub fn route(app: &mut CadApp, id: &str, params: &Value) -> Option<Result<Value, String>> {
+    if matches!(id, "ui.elettrico.symbols" | "ui.elettrico.symbol.insert") {
+        return Some(symbol::command(app, id, params));
+    }
     if id == "ui.elettrico.manager" {
         return Some(manager::command(app, params));
     }
     if id == "ui.elettrico.compose" {
+        app.elettrico.symbol.open = false;
         edit::finish(&mut app.elettrico);
     }
     if id == "ui.elettrico.edit" {
@@ -190,7 +197,7 @@ pub fn route(app: &mut CadApp, id: &str, params: &Value) -> Option<Result<Value,
 pub fn show(app: &mut CadApp, ctx: &egui::Context) {
     edit::poll(app, ctx);
     placement_window(app, ctx);
-    if app.session.running.as_ref().is_some_and(|r| r.id == "electrical.place") {
+    if app.session.running.as_ref().is_some_and(|r| matches!(r.id.as_str(), "electrical.place" | "electrical.symbol.place")) {
         return;
     }
     if !app.elettrico.library_attempted && (app.elettrico.open || catalog_environment().is_some()) {
@@ -203,6 +210,7 @@ pub fn show(app: &mut CadApp, ctx: &egui::Context) {
         }
     }
     manager::show(app, ctx);
+    symbol::show(app, ctx);
     let mut choose_library = false;
     let mut insert = false;
     let mut reload = false;
@@ -540,7 +548,7 @@ fn category_tree(ui: &mut egui::Ui, state: &mut State, prefix: &[String]) -> boo
 }
 
 fn placement_window(app: &mut CadApp, ctx: &egui::Context) {
-    if !app.session.running.as_ref().is_some_and(|r| r.id == "electrical.place") {
+    if !app.session.running.as_ref().is_some_and(|r| matches!(r.id.as_str(), "electrical.place" | "electrical.symbol.place")) {
         let cancelled_edit = app.session.electrical.as_ref().is_some_and(|p| p.is_edit());
         if app.session.electrical.as_ref().is_some_and(|p| p.phase > 0) {
             app.session.electrical = None;
@@ -557,6 +565,8 @@ fn placement_window(app: &mut CadApp, ctx: &egui::Context) {
     let Some(p) = &app.session.electrical else { return };
     let phase = p.phase;
     let editing = p.is_edit();
+    let single = p.is_symbol();
+    let previous_height = p.composition.installation_height_cm;
     let mut rotation = p.rotation;
     let mut side = p.side;
     let previous = (rotation, side);
@@ -565,7 +575,12 @@ fn placement_window(app: &mut CadApp, ctx: &egui::Context) {
     let mut next = false;
     let mut repick = false;
     let mut open = true;
+    let mut valid_height = true;
+    let mut height_change = None;
     egui::Window::new(match phase {
+        0 if single => "Inserisci simbolo",
+        1 if single => "Orientamento del simbolo",
+        3 => "Altezza di installazione",
         0 => "Inserisci scatola",
         1 => "Rotazione della scatola",
         _ => "Posizione dell'altezza",
@@ -591,6 +606,23 @@ fn placement_window(app: &mut CadApp, ctx: &egui::Context) {
                 });
                 ui.add(egui::DragValue::new(&mut rotation).range(-360.0..=360.0).suffix("°"));
             }
+            3 => {
+                if symbol::parse_height(&app.elettrico.symbol.height).is_ok_and(|h| h != previous_height) {
+                    app.elettrico.symbol.height = previous_height.map(|h| h.to_string()).unwrap_or_default();
+                }
+                height_field(ui, &mut app.elettrico.symbol.height);
+                match symbol::parse_height(&app.elettrico.symbol.height) {
+                    Ok(h) => {
+                        if h != previous_height {
+                            height_change = Some(h);
+                        }
+                    }
+                    Err(e) => {
+                        valid_height = false;
+                        ui.colored_label(Tokens::get().warn, e);
+                    }
+                }
+            }
             _ => {
                 ui.label("La scritta rimane orizzontale.");
                 ui.horizontal(|ui| {
@@ -606,13 +638,18 @@ fn placement_window(app: &mut CadApp, ctx: &egui::Context) {
         ui.horizontal(|ui| {
             if phase > 0 {
                 next = ui
-                    .button(if phase == 1 {
-                        "Conferma rotazione"
-                    } else if editing {
-                        "Conferma modifica"
-                    } else {
-                        "Inserisci scatola"
-                    })
+                    .add_enabled(
+                        valid_height,
+                        egui::Button::new(if phase == 1 {
+                            "Conferma rotazione"
+                        } else if phase == 3 {
+                            "Conferma altezza"
+                        } else if editing {
+                            "Conferma modifica"
+                        } else {
+                            if single { "Inserisci simbolo" } else { "Inserisci scatola" }
+                        }),
+                    )
                     .clicked();
             }
             cancel = ui.button("Annulla").clicked();
@@ -621,16 +658,23 @@ fn placement_window(app: &mut CadApp, ctx: &egui::Context) {
     if previous != (rotation, side) {
         let _ = app.run("electrical.options", json!({"rotation":rotation,"side":side}));
     }
+    if let Some(height) = height_change {
+        let _ = app.run("electrical.options", json!({"height_cm":height}));
+    }
     if repick {
         let _ = app.run("electrical.options", json!({"repick":true}));
     }
     if cancel || !open {
         app.session.cancel();
         app.session.electrical = None;
-        app.elettrico.open = true;
+        if single {
+            app.elettrico.symbol.open = true;
+        } else {
+            app.elettrico.open = true;
+        }
     } else if next {
         let _ = app.session.input(cadcraft_engine::Input::Enter);
-        if app.session.running.is_none() && !editing {
+        if app.session.running.is_none() && !editing && !single {
             app.elettrico.open = true;
         }
     }

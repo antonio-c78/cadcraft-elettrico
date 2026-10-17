@@ -156,6 +156,7 @@ fn prepare_edit(s: &mut Session, p: &Value) -> Result<Value> {
         return Err(bad("electrical.update", "Percorso troppo lungo."));
     }
     s.electrical = Some(Placement {
+        symbol: None,
         composition: c,
         point: Some(at),
         rotation: rotation.rem_euclid(360.0),
