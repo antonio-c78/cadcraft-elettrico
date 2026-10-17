@@ -5,6 +5,7 @@ use serde_json::{Value, json};
 use crate::{CadApp, theme::Tokens};
 
 mod catalog;
+mod edit;
 mod preview;
 
 fn catalog_environment() -> Option<String> {
@@ -34,6 +35,7 @@ pub struct State {
     catalog_path: Option<String>,
     favorites: std::collections::BTreeSet<String>,
     search: String,
+    editing: edit::State,
 }
 
 impl Default for State {
@@ -54,6 +56,7 @@ impl Default for State {
             catalog_path: None,
             favorites: Default::default(),
             search: String::new(),
+            editing: edit::State::default(),
         }
     }
 }
@@ -65,6 +68,9 @@ impl State {
 }
 
 pub fn route(app: &mut CadApp, id: &str, params: &Value) -> Option<Result<Value, String>> {
+    if id == "ui.elettrico.edit" {
+        return Some(edit::open(app, params));
+    }
     if id == "ui.elettrico.catalog" {
         let result = (|| {
             if app.session.running.is_some() {
@@ -143,6 +149,7 @@ pub fn route(app: &mut CadApp, id: &str, params: &Value) -> Option<Result<Value,
 }
 
 pub fn show(app: &mut CadApp, ctx: &egui::Context) {
+    edit::show(app, ctx);
     placement_window(app, ctx);
     if app.elettrico.open && !app.elettrico.library_attempted {
         app.elettrico.library_attempted = true;
@@ -169,7 +176,7 @@ pub fn show(app: &mut CadApp, ctx: &egui::Context) {
             ui.horizontal(|ui| {
                 ui.label("Scatola · posti");
                 let used = state.used();
-                for capacity in [3, 4, 6] {
+                for capacity in [3, 4, 6, 7] {
                     ui.add_enabled_ui(used <= capacity, |ui| {
                         ui.selectable_value(&mut state.capacity, capacity, capacity.to_string());
                     });
@@ -411,12 +418,14 @@ fn placement_window(app: &mut CadApp, ctx: &egui::Context) {
     }
     let Some(p) = &app.session.electrical else { return };
     let phase = p.phase;
+    let editing = p.is_edit();
     let mut rotation = p.rotation;
     let mut side = p.side;
     let previous = (rotation, side);
     let error = p.error.clone();
     let mut cancel = false;
     let mut next = false;
+    let mut repick = false;
     let mut open = true;
     egui::Window::new(match phase {
         0 => "Inserisci scatola",
@@ -434,6 +443,9 @@ fn placement_window(app: &mut CadApp, ctx: &egui::Context) {
             }
             1 => {
                 ui.label("Controlla l'anteprima nel disegno.");
+                if editing {
+                    repick = ui.button("Scegli un nuovo punto").clicked();
+                }
                 ui.horizontal(|ui| {
                     for angle in [0, 90, 180, 270] {
                         ui.selectable_value(&mut rotation, f64::from(angle), format!("{angle}°"));
@@ -455,7 +467,15 @@ fn placement_window(app: &mut CadApp, ctx: &egui::Context) {
         }
         ui.horizontal(|ui| {
             if phase > 0 {
-                next = ui.button(if phase == 1 { "Conferma rotazione" } else { "Inserisci scatola" }).clicked();
+                next = ui
+                    .button(if phase == 1 {
+                        "Conferma rotazione"
+                    } else if editing {
+                        "Conferma modifica"
+                    } else {
+                        "Inserisci scatola"
+                    })
+                    .clicked();
             }
             cancel = ui.button("Annulla").clicked();
         });
@@ -463,13 +483,20 @@ fn placement_window(app: &mut CadApp, ctx: &egui::Context) {
     if previous != (rotation, side) {
         let _ = app.run("electrical.options", json!({"rotation":rotation,"side":side}));
     }
+    if repick {
+        let _ = app.run("electrical.options", json!({"repick":true}));
+    }
     if cancel || !open {
         app.session.cancel();
         app.session.electrical = None;
-        app.elettrico.open = true;
+        if editing {
+            app.elettrico.editing.open = true;
+        } else {
+            app.elettrico.open = true;
+        }
     } else if next {
         let _ = app.session.input(cadcraft_engine::Input::Enter);
-        if app.session.running.is_none() {
+        if app.session.running.is_none() && !editing {
             app.elettrico.open = true;
         }
     }

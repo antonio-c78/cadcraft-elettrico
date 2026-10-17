@@ -7,7 +7,7 @@ and menu infrastructure so upstream updates remain manageable.
 ## First native interface
 
 - Elettrico → Componi scatola, also Ctrl+Shift+E on Windows.
-- Boxes with 3, 4 or 6 slots; provisional component sizes match the external prototype.
+- Supports with 3, 4, 6 or 7 slots; provisional component sizes match the external prototype.
 - UNEL occupies two slots. Adding components or reducing capacity cannot overfill a box.
 - Optional installation height stays in the main window.
 - A separate Settings window holds print scale and symbol size in 5% steps from 5%.
@@ -38,8 +38,8 @@ catalog text is represented by its rendered strokes). The installation height re
 text. Each outer INSERT stores UTF-8 JSON in `CC_COMPOSITORE` XDATA, preserving component
 names, source block identifiers, occupied slots, factor, height, placement rotation and label
 side. Metadata survives DXF saves, and is groundwork for editing, material schedules and
-legends; those tools are not implemented yet. Rotating a completed block with the generic
-ROTATE command rotates its height too; independent annotation editing is a later feature.
+legends. Material schedules and legends are not implemented yet. Generic ROTATE rotates
+the whole block; reopening it through the electrical editor restores horizontal annotation.
 
 Engine commands: `electrical.prepare`, interactive `electrical.place`, `electrical.options`,
 and dialog-free `electrical.insert`. The latter accepts the external library, composition,
@@ -68,7 +68,7 @@ The catalog is UTF-8 JSON (optional BOM), limited to 1 MB and 512 enabled box co
 }
 ```
 
-`library` resolves relative to the JSON file. `modules` is occupied slots (1–6); unknown
+`library` resolves relative to the JSON file. `modules` is occupied slots (1–7); unknown
 occupancy must be reviewed before adding a symbol to the enabled catalog. `category` is
 an optional path of up to four names, creating nested expandable menus. Names, graphics,
 slot occupancy, categories, default scale, default percentage and default units can change
@@ -102,8 +102,38 @@ of changes. The full CI gate still runs before committing a completed feature.
 ## Next implementation stages
 
 1. Load configurable component metadata, including slot occupancy.
-2. Edit an existing assembly from its stored composition metadata.
+2. Expand the electrical editor and review series-specific compatibility with the owner.
 3. Build material schedules and a legend of used symbols.
 
 User drawings and third-party symbol libraries stay outside this public source repository.
 The material model will distinguish the flush box, support, devices, blanking modules and plate.
+
+## Edit an existing box
+
+Elettrico → Modifica scatola accepts one preselected native composer block, or asks for
+one click in the drawing. The internal window offers complete editing, replacement of a
+single component, installation height only, or the height label side only. Switching modes
+resets provisional edits to the saved box so hidden edits cannot accidentally be applied.
+Complete editing allows changing capacity (3, 4, 6, 7), rebuilding from an empty composition,
+position, rotation and model size. Overfull and empty compositions cannot be confirmed.
+Six and seven slots describe support capacity; they do not imply a different flush box.
+Physical compatibility with civil series remains a future, explicitly reviewed catalog rule.
+
+Apply replaces only the chosen reference, retaining its handle and outer properties. A fresh
+block definition protects copied references sharing the old block. Original geometry remains
+in the drawing until confirmation, with a DXF backup before the atomic change and one Undo.
+Closing or canceling either window does not alter the original. A changed document/revision
+requires reopening the editor. Complete placement review keeps the current point initially;
+`Scegli un nuovo punto` permits repicking before rotation and label confirmation.
+
+Height/label/placement-only edits reuse the stored vector geometry without the external DXF.
+Composition or size changes rebuild using the current symbol library. Preview in the editor
+shows composition; the placement review shows actual drawing rotation and label side.
+Moved, rotated and positively, uniformly scaled native references are supported; arrays,
+mirroring, nonuniform scaling and nonzero block bases are rejected rather than guessed.
+Older external-composer blocks without native version-1 metadata require conversion first.
+
+Dialog-free commands: `electrical.read {handle}` returns the snapshot including `uid` and
+`revision`; pass this snapshot with changed fields to `electrical.update` for a single
+transaction. `electrical.edit.prepare` prepares the same change without modifying the
+drawing, then interactive `electrical.place` reviews placement before confirmation.

@@ -13,7 +13,7 @@ pub(super) struct Component {
     pub category: Vec<String>,
 }
 
-#[derive(Deserialize)]
+#[derive(Clone, Deserialize)]
 pub(super) struct Defaults {
     pub scale: u16,
     pub size_percent: u16,
@@ -26,7 +26,7 @@ impl Default for Defaults {
     }
 }
 
-#[derive(Default, Deserialize)]
+#[derive(Clone, Default, Deserialize)]
 pub(super) struct Catalog {
     pub version: u32,
     pub library: String,
@@ -66,12 +66,12 @@ impl Catalog {
                 || c.name.len() > 255
                 || c.block.is_empty()
                 || c.block.len() > 255
-                || !(1..=6).contains(&c.modules)
+                || !(1..=7).contains(&c.modules)
                 || c.category.len() > 4
                 || c.category.iter().any(|s| s.is_empty() || s.len() > 80)
                 || !ids.insert(&c.id)
             {
-                return Err(format!("Componente non valido o ID duplicato: {}. Posti ammessi: 1–6; massimo quattro livelli di categorie.", c.id));
+                return Err(format!("Componente non valido o ID duplicato: {}. Posti ammessi: 1–7; massimo quattro livelli di categorie.", c.id));
             }
         }
         Ok(catalog)
@@ -79,7 +79,7 @@ impl Catalog {
 
     /// Remap by stable ID. Reordering a file must never silently replace a selected device.
     pub fn remap(&self, old: &Self, selected: &[usize], capacity: u8) -> Result<Vec<usize>, String> {
-        if selected.len() > 6 {
+        if selected.len() > 7 {
             return Err("Troppi componenti nella composizione.".into());
         }
         let mut result = Vec::new();

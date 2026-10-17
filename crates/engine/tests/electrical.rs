@@ -14,6 +14,130 @@ fn metadata(s: &Session) -> Value {
 }
 
 #[test]
+fn editing_replaces_only_one_reference_preserves_geometry_supports_seven_and_is_atomic() {
+    set_io(IoHooks {
+        read: |b, n| cadcraft_io::read(b, n).map_err(|e| e.to_string()),
+        write: |d, n| cadcraft_io::write(d, n).map_err(|e| e.to_string()),
+        plot: None,
+    });
+    let root = std::env::temp_dir().join(format!(
+        "cadcraft-edit-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()
+    ));
+    std::fs::create_dir_all(&root).unwrap();
+    let mut library = Drawing::new_metric();
+    let mut b = Block::new("Switch");
+    b.entities.push(Entity::new(Handle(100), EntityKind::Line(Line { a: Vec3::ZERO, b: Vec3::new(3.0, 4.0, 0.0) })));
+    library.blocks.insert("Switch".into(), Arc::new(b));
+    let path = root.join("symbols.dxf");
+    std::fs::write(&path, cadcraft_io::write(&library, "symbols.dxf").unwrap()).unwrap();
+    let mut s = Session::new();
+    let request = json!({"library":path,"backup_dir":root,"composition":{"capacity":3,"items":[{"name":"Switch","block":"Switch","modules":1}],"factor":1.0,"installation_height_cm":100},"at":[20,30],"rotation":90});
+    let inserted = s.execute("electrical.insert", &request).unwrap();
+    let handle = inserted["handle"].as_u64().map(Handle).or_else(|| inserted["handle"].as_str().and_then(Handle::parse_hex)).unwrap();
+    // A second reference deliberately shares the original definition, just like COPY.
+    let original = s.doc().unwrap().entity(handle).unwrap().clone();
+    let copy = s.doc_mut().unwrap().add(&cadcraft_engine::doc::Space::Model, original.common.clone(), original.kind.clone()).unwrap();
+    let original_block = inserted["block"].as_str().unwrap();
+    let lines = |s: &Session, name: &str| {
+        s.doc()
+            .unwrap()
+            .block(name)
+            .unwrap()
+            .entities
+            .iter()
+            .filter_map(|e| match &e.kind {
+                EntityKind::Line(l) => Some((l.a, l.b)),
+                _ => None,
+            })
+            .collect::<Vec<_>>()
+    };
+    let old_lines = lines(&s, original_block);
+    let mut edit = s.execute("electrical.read", &json!({"handle":handle})).unwrap();
+    edit["backup_dir"] = json!(root);
+    edit["composition"]["installation_height_cm"] = json!(120);
+    edit["side"] = json!(3);
+    let before = s.state().unwrap().doc.clone();
+    s.execute("electrical.edit.prepare", &edit).unwrap();
+    s.start("electrical.place").unwrap();
+    assert_eq!(s.electrical.as_ref().unwrap().phase, 1);
+    s.cancel();
+    assert!(Arc::ptr_eq(&before, &s.state().unwrap().doc));
+    let result = s.execute("electrical.update", &edit).unwrap();
+    assert_eq!(s.doc().unwrap().model.len(), 2);
+    assert_eq!(lines(&s, result["block"].as_str().unwrap()), old_lines);
+    assert_eq!(s.doc().unwrap().entity(copy).unwrap().kind, original.kind);
+    assert_eq!(s.doc().unwrap().entity(handle).unwrap().common.layer, original.common.layer);
+    let block = s.doc().unwrap().block(result["block"].as_str().unwrap()).unwrap();
+    assert!(block.entities.iter().any(|e| matches!(&e.kind,EntityKind::Text(t) if t.value=="H120" && t.rotation==0.0)));
+    // A stale dialog may not overwrite later drawing changes.
+    assert!(s.execute("electrical.update", &edit).is_err());
+    s.execute("undo", &json!({})).unwrap();
+    assert_eq!(s.doc().unwrap().entity(handle).unwrap().kind, original.kind);
+    let mut edit = s.execute("electrical.read", &json!({"handle":handle})).unwrap();
+    edit["backup_dir"] = json!(root);
+    edit["library"] = json!(path);
+    edit["composition"]["capacity"] = json!(7);
+    edit["composition"]["items"] = json!(vec![json!({"name":"Switch","block":"Switch","modules":1}); 7]);
+    let result = s.execute("electrical.update", &edit).unwrap();
+    assert_eq!(s.doc().unwrap().model.len(), 2);
+    assert_eq!(s.execute("electrical.read", &json!({"handle":handle})).unwrap()["composition"]["capacity"], 7);
+    let saved = cadcraft_io::read(&std::fs::read(result["backup"].as_str().unwrap()).unwrap(), "backup.dxf").unwrap();
+    assert_eq!(saved.model.len(), 2);
+    let mut edit = s.execute("electrical.read", &json!({"handle":handle})).unwrap();
+    let before = s.state().unwrap().doc.clone();
+    edit["library"] = json!(path);
+    edit["composition"]["capacity"] = json!(6);
+    assert!(s.execute("electrical.update", &edit).is_err());
+    assert!(Arc::ptr_eq(&before, &s.state().unwrap().doc));
+    edit["composition"]["capacity"] = json!(7);
+    edit["composition"]["installation_height_cm"] = Value::Null;
+    let file = root.join("not-directory");
+    std::fs::write(&file, b"x").unwrap();
+    edit["backup_dir"] = json!(file);
+    assert!(s.execute("electrical.update", &edit).is_err());
+    assert!(Arc::ptr_eq(&before, &s.state().unwrap().doc));
+    edit["backup_dir"] = json!(root);
+    s.execute("electrical.update", &edit).unwrap();
+    let r = s.execute("electrical.read", &json!({"handle":handle})).unwrap();
+    assert!(r["composition"]["installation_height_cm"].is_null());
+    s.doc_mut()
+        .unwrap()
+        .modify_entity(handle, |e| {
+            if let EntityKind::Insert(i) = &mut e.kind {
+                i.insert = Vec3::new(120.0, 230.0, 0.0);
+                i.scale = Vec3::new(2.0, 2.0, 1.0);
+                i.rotation = std::f64::consts::FRAC_PI_2;
+            }
+        })
+        .unwrap();
+    let mut transformed = s.execute("electrical.read", &json!({"handle":handle})).unwrap();
+    assert_eq!(transformed["at"], json!([120.0, 230.0]));
+    assert_eq!(transformed["rotation"], 180.0);
+    assert_eq!(transformed["composition"]["factor"], 2.0);
+    transformed["composition"]["installation_height_cm"] = json!(80);
+    transformed["backup_dir"] = json!(root);
+    let updated = s.execute("electrical.update", &transformed).unwrap();
+    let block = s.doc().unwrap().block(updated["block"].as_str().unwrap()).unwrap();
+    assert!(block.entities.iter().any(|e| matches!(&e.kind,EntityKind::Text(t) if t.value=="H80" && t.rotation==0.0)));
+    // Nonuniform scaling is rejected rather than silently changing the symbol proportions.
+    s.doc_mut()
+        .unwrap()
+        .modify_entity(handle, |e| {
+            if let EntityKind::Insert(i) = &mut e.kind {
+                i.scale.x = 2.0;
+            }
+        })
+        .unwrap();
+    assert!(s.execute("electrical.read", &json!({"handle":handle})).is_err());
+    // Different documents and unsupported object types never become edit targets.
+    s.new_drawing(true);
+    assert!(s.execute("electrical.update", &r).is_err());
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn provisional_placement_backup_atomic_insert_metadata_roundtrip_and_undo() {
     set_io(IoHooks {
         read: |b, n| cadcraft_io::read(b, n).map_err(|e| e.to_string()),

@@ -9,6 +9,8 @@ use serde_json::{Value, json};
 use super::{CommandSpec, bad};
 use crate::{Accept, Input, Interactive, Prompt, Result, Session, Step};
 
+mod edit;
+
 #[derive(Clone, Deserialize, Serialize)]
 pub struct Component {
     pub name: String,
@@ -35,11 +37,13 @@ pub struct Placement {
     pub error: Option<String>,
     uid: u64,
     geometry: Vec<EntityKind>,
+    geometry_rotation: f64,
     backup_dir: Option<String>,
+    target: Option<(cadcraft_doc::Handle, u64)>,
 }
 
 pub fn specs() -> Vec<CommandSpec> {
-    vec![
+    let mut commands = vec![
         CommandSpec::new("electrical.prepare", "Prepare electrical box", prepare).noundo(),
         CommandSpec::new("electrical.options", "Electrical box options", options).noundo(),
         CommandSpec::new("electrical.insert", "Insert electrical box", insert).params(
@@ -61,19 +65,21 @@ pub fn specs() -> Vec<CommandSpec> {
             }
             Ok(Box::new(Place))
         }),
-    ]
+    ];
+    commands.extend(edit::specs());
+    commands
 }
 
 fn validate(c: &Composition) -> Result<()> {
-    if c.items.len() > 6 {
+    if c.items.len() > 7 {
         return Err(bad("electrical.prepare", "Troppi componenti."));
     }
     let occupied: u16 = c.items.iter().map(|i| u16::from(i.modules)).sum();
-    if ![3, 4, 6].contains(&c.capacity)
+    if ![3, 4, 6, 7].contains(&c.capacity)
         || c.items.is_empty()
-        || c.items.len() > 6
+        || c.items.len() > 7
         || occupied > u16::from(c.capacity)
-        || c.items.iter().any(|i| i.modules == 0 || i.modules > 6 || i.name.len() > 255 || i.block.len() > 255)
+        || c.items.iter().any(|i| i.modules == 0 || i.modules > 7 || i.name.len() > 255 || i.block.len() > 255)
         || !c.factor.is_finite()
         || !(0.000005..=3000.0).contains(&c.factor)
         || c.installation_height_cm.is_some_and(|v| !v.is_finite() || !(0.0..=10000.0).contains(&v))
@@ -96,8 +102,19 @@ fn prepare(s: &mut Session, p: &Value) -> Result<Value> {
     if backup_dir.as_ref().is_some_and(|p| p.len() > 32768) {
         return Err(bad("electrical.prepare", "Percorso copia di sicurezza troppo lungo."));
     }
-    s.electrical =
-        Some(Placement { composition: c, point: None, rotation: 0.0, side: 0, phase: 0, error: None, uid: s.state()?.uid, geometry, backup_dir });
+    s.electrical = Some(Placement {
+        composition: c,
+        point: None,
+        rotation: 0.0,
+        side: 0,
+        phase: 0,
+        error: None,
+        uid: s.state()?.uid,
+        geometry,
+        geometry_rotation: 0.0,
+        backup_dir,
+        target: None,
+    });
     Ok(json!({"prepared": true}))
 }
 
@@ -133,6 +150,10 @@ fn options(s: &mut Session, p: &Value) -> Result<Value> {
     }
     if let Some(v) = side {
         placement.side = v as u8;
+    }
+    if p.get("repick").and_then(Value::as_bool) == Some(true) {
+        placement.phase = 0;
+        placement.point = None;
     }
     Ok(json!({"rotation": placement.rotation, "side": placement.side}))
 }
@@ -225,11 +246,15 @@ fn geometry(d: &cadcraft_doc::Drawing, c: &Composition) -> Result<Vec<EntityKind
 }
 
 impl Placement {
+    pub fn is_edit(&self) -> bool {
+        self.target.is_some()
+    }
     fn kinds(&self, at: Vec2) -> Vec<EntityKind> {
         let mut kinds = self.geometry.clone();
         let rotation = Mat3::rotate(self.rotation.to_radians());
+        let delta = Mat3::rotate((self.rotation - self.geometry_rotation).to_radians());
         for kind in &mut kinds {
-            kind.transform(&rotation);
+            kind.transform(&delta);
         }
         if let Some(h) = self.composition.installation_height_cm {
             let f = self.composition.factor;
@@ -271,6 +296,15 @@ fn commit(s: &mut Session) -> Result<Value> {
     }
     let at = p.point.ok_or_else(|| bad("electrical.place", "Scegli il punto."))?;
     let mut d = s.doc()?.clone();
+    if let Some((handle, revision)) = p.target {
+        if s.state()?.revision != revision || d.entity(handle).is_none() {
+            return Err(bad("electrical.place", "Il disegno è cambiato. Riapri la scatola da modificare."));
+        }
+        let layer = d.entity(handle).map(|e| e.common.layer.as_str()).unwrap_or("");
+        if d.layers.iter().any(|l| l.name.eq_ignore_ascii_case(layer) && (l.locked || !l.on || l.frozen)) {
+            return Err(bad("electrical.place", "Attiva e sblocca il layer della scatola."));
+        }
+    }
     if d.layers.iter().any(|l| l.name.eq_ignore_ascii_case("EL_SCATOLE") && (l.locked || !l.on || l.frozen)) {
         return Err(bad("electrical.place", "Attiva e sblocca il layer EL_SCATOLE."));
     }
@@ -315,6 +349,23 @@ fn commit(s: &mut Session) -> Result<Value> {
             row_spacing: 0.0,
         }),
     )?;
+    let handle = if let Some((target, _)) = p.target {
+        let replacement = d.remove_entity(handle).ok_or_else(|| bad("electrical.place", "Modifica non disponibile."))?;
+        d.modify_entity(target, |entity| {
+            let mut active = false;
+            entity.common.xdata.retain(|tag| {
+                if tag.code == 1001 {
+                    active = tag.value == "CC_COMPOSITORE";
+                }
+                !active
+            });
+            entity.common.xdata.extend(replacement.common.xdata.clone());
+            entity.kind = replacement.kind.clone();
+        })?;
+        target
+    } else {
+        handle
+    };
     let backup = backup(s.doc()?, p.backup_dir.as_deref())?;
     *s.doc_mut()? = d;
     Ok(json!({"handle":handle,"block":name,"backup":backup}))
@@ -348,6 +399,15 @@ fn backup(_d: &cadcraft_doc::Drawing, _directory: Option<&str>) -> Result<String
 
 struct Place;
 impl Interactive for Place {
+    fn begin(&mut self, s: &mut Session) -> Result<Step> {
+        if let Some(p) = &mut s.electrical
+            && p.target.is_some()
+            && p.point.is_some()
+        {
+            p.phase = 1;
+        }
+        Ok(Step::Continue)
+    }
     fn name(&self) -> &'static str {
         "electrical.place"
     }

@@ -15,6 +15,7 @@ use super::{State, catalog::Component};
 #[cfg(not(target_arch = "wasm32"))]
 const MAX_LIBRARY_BYTES: u64 = 16 * 1024 * 1024;
 
+#[derive(Clone)]
 pub(super) struct Library {
     pub name: String,
     pub source_path: String,
@@ -96,38 +97,48 @@ fn fit_symbol(bounds: Bounds2, slot: Rect, unit: f32) -> Option<Xf> {
 }
 
 pub(super) fn show(ui: &mut egui::Ui, state: &State) {
+    let _ = show_edit(ui, state, 0);
+}
+
+pub(super) fn show_edit(ui: &mut egui::Ui, state: &State, side: u8) -> Option<usize> {
     let (rect, _) = ui.allocate_exact_size(vec2(ui.available_width().max(100.0), 200.0), egui::Sense::hover());
     let painter = ui.painter_at(rect);
     let background = crate::theme::Tokens::DARK.canvas;
     painter.rect_filled(rect, 3.0, background);
-    let capacity = f32::from(state.capacity.clamp(1, 6));
+    let capacity = f32::from(state.capacity.clamp(1, 7));
     let label = if state.height.len() <= 32 {
         state.height.trim().replace(',', ".").parse::<f64>().ok().filter(|value| value.is_finite() && (0.0..=10000.0).contains(value))
     } else {
         None
     };
-    let extra_height = if label.is_some() { 3.0 } else { 0.0 };
+    let extra_height = if label.is_some() && side < 2 { 3.0 } else { 0.0 };
+    let extra_width = if label.is_some() && side >= 2 { 8.0 } else { 0.0 };
     let inner = rect.shrink(16.0);
-    let unit = (inner.width() / (capacity * 3.0)).min(inner.height() / (5.0 + extra_height));
+    let unit = (inner.width() / (capacity * 3.0 + extra_width)).min(inner.height() / (5.0 + extra_height));
     let box_size = vec2(capacity * 3.0 * unit, 5.0 * unit);
-    let box_center = inner.center() + vec2(0.0, extra_height * unit / 2.0);
+    let box_center = inner.center()
+        + vec2(if side == 2 { -extra_width } else { extra_width }, if side == 1 { -extra_height } else { extra_height }) * (unit / 2.0);
     let box_rect = Rect::from_center_size(box_center, box_size);
     let stroke = Stroke::new(1.5, Color32::WHITE);
     painter.rect_stroke(box_rect, 0.0, stroke, egui::StrokeKind::Inside);
     if let Some(height) = label {
-        painter.text(
-            pos2(box_center.x, box_rect.top() - unit),
-            egui::Align2::CENTER_BOTTOM,
-            format!("H{height}"),
-            egui::FontId::proportional(1.8 * unit),
-            Color32::WHITE,
-        );
+        let (point, align) = match side {
+            1 => (pos2(box_center.x, box_rect.bottom() + unit), egui::Align2::CENTER_TOP),
+            2 => (pos2(box_rect.right() + unit, box_center.y), egui::Align2::LEFT_CENTER),
+            3 => (pos2(box_rect.left() - unit, box_center.y), egui::Align2::RIGHT_CENTER),
+            _ => (pos2(box_center.x, box_rect.top() - unit), egui::Align2::CENTER_BOTTOM),
+        };
+        painter.text(point, align, format!("H{height}"), egui::FontId::proportional(1.8 * unit), Color32::WHITE);
     }
     let mut position = 0.0;
-    for index in &state.items {
+    let mut selected = None;
+    for (item_position, index) in state.items.iter().enumerate() {
         let Some(component) = state.catalog.components.get(*index) else { continue };
         let span = f32::from(component.modules) * 3.0 * unit;
         let slot = Rect::from_min_size(pos2(box_rect.left() + position, box_rect.top()), vec2(span, box_rect.height()));
+        if ui.interact(slot, ui.id().with(("electrical-preview", item_position)), egui::Sense::click()).clicked() {
+            selected = Some(item_position);
+        }
         if position > 0.0 {
             painter.line_segment([slot.left_top(), slot.left_bottom()], stroke);
         }
@@ -146,6 +157,7 @@ pub(super) fn show(ui: &mut egui::Ui, state: &State) {
         let x = box_rect.left() + position;
         painter.line_segment([pos2(x, box_rect.top()), pos2(x, box_rect.bottom())], stroke);
     }
+    selected
 }
 
 #[cfg(test)]

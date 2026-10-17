@@ -19,6 +19,7 @@ pub const UI_COMMANDS: &[(&str, &str, &[&str], Option<&str>)] = &[
     ("ui.elettrico.catalog", "Ricarica catalogo elettrico", &[], None),
     ("ui.elettrico.compose", "Componi scatola...", &["Elettrico", "Componi scatola..."], Some("Cmd+Shift+E")),
     ("ui.elettrico.settings", "Impostazioni...", &["Elettrico", "Impostazioni..."], None),
+    ("ui.elettrico.edit", "Modifica scatola...", &["Elettrico", "Modifica scatola..."], None),
     ("ui.spacemouse", "3D Mouse...", &["Tools", "3D Mouse..."], None),
     ("ui.spacemouse.calibrate", "Calibrate 3D Mouse", &[], None),
     ("ui.spacemouse.navigate", "3D Mouse Navigation", &[], None),
