@@ -174,6 +174,47 @@ pub fn title_and_toolbar(app: &mut CadApp, ui: &mut egui::Ui) {
     });
 }
 
+/// Electrical shortcuts use the same commands and icon controls as the rest of CADCraft.
+pub fn electrical_toolbar(app: &mut CadApp, ui: &mut egui::Ui) {
+    if !app.ui.show_toolbar {
+        return;
+    }
+    let busy = app.session.running.is_some();
+    let has_doc = !app.session.docs.is_empty() && !app.ui.start_tab;
+    let mut clicked = None;
+    egui::Panel::top("cc_electrical_toolbar").exact_size(36.0).frame(egui::Frame::NONE.fill(Tokens::get().chrome)).show(ui, |ui| {
+        egui::ScrollArea::horizontal().id_salt("electrical_toolbar_scroll").show(ui, |ui| {
+            ui.horizontal_centered(|ui| {
+                ui.add_space(12.0);
+                ui.label(egui::RichText::new("Elettrico").strong());
+                ui.add_space(12.0);
+                for (index, (icon, command, label, needs_doc)) in [
+                    (Icon::ElectricalCompose, "ui.elettrico.compose", "Componi scatola...", true),
+                    (Icon::ElectricalEdit, "ui.elettrico.edit", "Modifica scatola...", true),
+                    (Icon::ElectricalSymbol, "ui.elettrico.symbols", "Inserisci simbolo...", true),
+                    (Icon::ElectricalCatalog, "ui.elettrico.manager", "Gestione catalogo simboli...", false),
+                ]
+                .into_iter()
+                .enumerate()
+                {
+                    if index == 2 {
+                        ui.separator();
+                    }
+                    ui.add_enabled_ui(!busy && (!needs_doc || has_doc), |ui| {
+                        if icons::button(ui, icon, 26.0, label, false).clicked() {
+                            clicked = Some(command);
+                        }
+                    });
+                    ui.add_space(4.0);
+                }
+            });
+        });
+    });
+    if let Some(command) = clicked {
+        app.start(command);
+    }
+}
+
 /// File tabs: switcher, "+", Start, open drawings.
 pub fn file_tabs(app: &mut CadApp, ui: &mut egui::Ui) {
     let t = Tokens::get();

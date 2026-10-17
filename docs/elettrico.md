@@ -238,3 +238,12 @@ height_cm and side. The symbol object requires id,name,block,category,factor,wid
 height_mm,anchor:[x,y]. electrical.options controls rotation/side and symbol height_cm
 (null clears it). UI commands ui.elettrico.symbols and ui.elettrico.symbol.insert {id}
 use the active external catalog. Settings JSON uses scale,size_percent,units (mm or m).
+
+## Barra strumenti Elettrico
+
+La barra Elettrico, sotto il menu, richiama Componi scatola, Modifica scatola,
+Inserisci simbolo e Gestione catalogo. Le icone originali usano la stessa griglia,
+palette del tema e interazione delle altre icone CADCraft. Il nome appare al
+passaggio del mouse. Durante un comando i pulsanti sono disabilitati; senza un
+disegno resta disponibile il catalogo. La barra segue la visibilità generale delle
+barre strumenti e scorre nelle finestre strette.

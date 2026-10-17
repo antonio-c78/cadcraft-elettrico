@@ -10,6 +10,10 @@ use crate::theme::Tokens;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Icon {
+    ElectricalCompose,
+    ElectricalEdit,
+    ElectricalSymbol,
+    ElectricalCatalog,
     New,
     Open,
     Save,
@@ -227,6 +231,36 @@ pub fn paint(p: &Painter, rect: Rect, icon: Icon, dim: bool) {
     let (b, a) = (pen.base, pen.acc);
     use Icon::*;
     match icon {
+        ElectricalCompose | ElectricalEdit => {
+            pen.rect(3.0, 6.0, 16.0, 12.0, b);
+            pen.l(8.3, 6.0, 8.3, 18.0);
+            pen.l(13.7, 6.0, 13.7, 18.0);
+            if icon == ElectricalCompose {
+                pen.la(17.0, 17.0, 23.0, 17.0);
+                pen.la(20.0, 14.0, 20.0, 20.0);
+            } else {
+                pen.poly(&[(14.0, 20.0), (15.0, 16.0), (21.0, 10.0), (23.0, 12.0), (17.0, 18.0)], true, a);
+                pen.la(19.0, 12.0, 21.0, 14.0);
+            }
+        }
+        ElectricalSymbol => {
+            pen.c(7.0, 16.0, 3.0, b);
+            pen.poly(&[(7.0, 13.0), (13.0, 3.0), (17.0, 5.0)], false, b);
+            pen.fill_c(7.0, 16.0, 0.9, pen.pt);
+            pen.la(16.0, 17.0, 22.0, 17.0);
+            pen.la(19.0, 14.0, 19.0, 20.0);
+        }
+        ElectricalCatalog => {
+            for (x, y) in [(3.0, 4.0), (13.0, 4.0), (3.0, 14.0)] {
+                pen.rect(x, y, 6.0, 6.0, b);
+            }
+            pen.c(17.0, 18.0, 3.0, a);
+            for (dx, dy) in [(0.0, 1.0), (1.0, 0.0), (0.7, 0.7), (0.7, -0.7)] {
+                for sign in [-1.0, 1.0] {
+                    pen.la(17.0 + dx * 3.0 * sign, 18.0 + dy * 3.0 * sign, 17.0 + dx * 5.0 * sign, 18.0 + dy * 5.0 * sign);
+                }
+            }
+        }
         New => {
             pen.poly(&[(6.0, 3.0), (15.0, 3.0), (19.0, 7.0), (19.0, 21.0), (6.0, 21.0)], true, b);
             pen.poly(&[(15.0, 3.0), (15.0, 7.0), (19.0, 7.0)], false, b);

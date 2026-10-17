@@ -625,6 +625,7 @@ impl CadApp {
         if self.ui.in_window_menu {
             menus::menu_bar(self, ui);
         }
+        chrome::electrical_toolbar(self, ui);
         if self.ui.show_status_bar {
             chrome::status_bar(self, ui);
         }
