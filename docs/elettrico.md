@@ -11,14 +11,22 @@ and menu infrastructure so upstream updates remain manageable.
 - UNEL occupies two slots. Adding components or reducing capacity cannot overfill a box.
 - Optional installation height stays in the main window.
 - A separate Settings window holds print scale and symbol size in 5% steps from 5%.
+- A live CAD preview shows the actual external symbols, white on a dark background,
+  fitted and centered in their occupied slots. The optional height appears above the box.
 
-This first interface does not insert drawing entities or show electrical symbol artwork.
+This interface does not yet insert drawing entities.
 Its composition and settings currently last for the application session only.
 The external composer remains the working insertion tool until native insertion is validated.
 
+The local launcher supplies the external DXF path through `CADCRAFT_ELECTRICAL_LIBRARY`.
+Settings also offers a DXF picker. The explicit UI command `ui.elettrico.library {path}`
+loads a library without changing any open drawing. Reads are bounded to 16 MB, and the
+nine symbol display lists are cached until a different library is selected. Source artwork
+stays outside this repository.
+
 ## Next implementation stages
 
-1. Load the user's external symbol catalog, including configurable slot occupancy.
+1. Load configurable component metadata, including slot occupancy.
 2. Preview and insert a single assembly block using engine commands and an undoable operation.
 3. Choose placement, rotation and optional height annotation with visual controls inside CADCraft.
 4. Persist assembly metadata for editing, material schedules and a legend of used symbols.
