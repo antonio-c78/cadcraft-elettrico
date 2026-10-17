@@ -23,6 +23,13 @@ pub(super) struct Library {
 }
 
 impl Library {
+    pub fn remap(&self, old: &[Component], new: &[Component]) -> Self {
+        Self {
+            name: self.name.clone(),
+            source_path: self.source_path.clone(),
+            symbols: new.iter().map(|c| old.iter().position(|v| v.block == c.block).and_then(|i| self.symbols.get(i)).cloned().flatten()).collect(),
+        }
+    }
     pub fn available(&self) -> usize {
         self.symbols.iter().filter(|symbol| symbol.is_some()).count()
     }
@@ -94,10 +101,6 @@ fn fit_symbol(bounds: Bounds2, slot: Rect, unit: f32) -> Option<Xf> {
     }
     let scale = (f64::from(slot.width() - 0.65 * unit) / width.max(1e-9)).min(f64::from(slot.height() - 1.1 * unit) / height.max(1e-9));
     (scale.is_finite() && scale > 0.0).then(|| Xf { rect: slot, center: bounds.center(), scale })
-}
-
-pub(super) fn show(ui: &mut egui::Ui, state: &State) {
-    let _ = show_edit(ui, state, 0);
 }
 
 pub(super) fn show_edit(ui: &mut egui::Ui, state: &State, side: u8) -> Option<usize> {

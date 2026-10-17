@@ -111,11 +111,17 @@ The material model will distinguish the flush box, support, devices, blanking mo
 ## Edit an existing box
 
 Elettrico → Modifica scatola accepts one preselected native composer block, or asks for
-one click in the drawing. The internal window offers complete editing, replacement of a
-single component, installation height only, or the height label side only. Switching modes
-resets provisional edits to the saved box so hidden edits cannot accidentally be applied.
+one click in the drawing. Creation and complete editing use the same composer window,
+including categories, favorites, component rows and preview. Editing adds a top dropdown:
+whole box, installation height, or label position. Partial modes show only their controls
+and preview, and apply only that field from the original snapshot, even if a full draft has
+unconfirmed changes. Returning to whole-box mode retains the draft. The old separate editor
+and single-component mode are removed. Select a component in the preview or use Sostituisci,
+then choose its replacement in the same catalog, preserving the component's list position.
 Complete editing allows changing capacity (3, 4, 6, 7), rebuilding from an empty composition,
-position, rotation and model size. Overfull and empty compositions cannot be confirmed.
+and changing model size through the shared Settings window. Exact saved model factor, position and
+rotation are retained unless explicitly changed. Riposiziona nel disegno opens placement
+review for point and rotation. Overfull and empty compositions cannot be confirmed.
 Six and seven slots describe support capacity; they do not imply a different flush box.
 Physical compatibility with civil series remains a future, explicitly reviewed catalog rule.
 
@@ -125,6 +131,9 @@ in the drawing until confirmation, with a DXF backup before the atomic change an
 Closing or canceling either window does not alter the original. A changed document/revision
 requires reopening the editor. Complete placement review keeps the current point initially;
 `Scegli un nuovo punto` permits repicking before rotation and label confirmation.
+The new-box draft and settings are restored after edit confirmation or cancellation.
+Historical component names and footprints remain in the draft even after a catalog change;
+temporary entries are removed when editing ends. Catalog reload is disabled during editing.
 
 Height/label/placement-only edits reuse the stored vector geometry without the external DXF.
 Composition or size changes rebuild using the current symbol library. Preview in the editor

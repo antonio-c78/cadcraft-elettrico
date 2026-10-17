@@ -36,6 +36,7 @@ pub struct State {
     favorites: std::collections::BTreeSet<String>,
     search: String,
     editing: edit::State,
+    replacing: Option<usize>,
 }
 
 impl Default for State {
@@ -57,21 +58,50 @@ impl Default for State {
             favorites: Default::default(),
             search: String::new(),
             editing: edit::State::default(),
+            replacing: None,
         }
     }
 }
 
 impl State {
+    fn can_choose(&self, modules: u8) -> bool {
+        let replaced = self.replacing.and_then(|p| self.items.get(p)).and_then(|i| self.catalog.components.get(*i)).map(|c| c.modules).unwrap_or(0);
+        u16::from(self.used()) - u16::from(replaced) + u16::from(modules) <= u16::from(self.capacity)
+    }
+    fn choose(&mut self, index: usize) {
+        if !self.catalog.components.get(index).is_some_and(|c| self.can_choose(c.modules)) {
+            return;
+        }
+        if let Some(position) = self.replacing.take() {
+            if let Some(item) = self.items.get_mut(position) {
+                *item = index;
+            }
+        } else {
+            self.items.push(index);
+        }
+    }
+    fn settings_factor(&self) -> f64 {
+        f64::from(self.scale) * f64::from(self.size_percent) / 100.0 / if self.model_meters { 1000.0 } else { 1.0 }
+    }
+    fn factor(&self) -> f64 {
+        self.editing.factor.unwrap_or_else(|| self.settings_factor())
+    }
     fn used(&self) -> u8 {
         self.items.iter().filter_map(|i| self.catalog.components.get(*i)).map(|c| c.modules).sum()
     }
 }
 
 pub fn route(app: &mut CadApp, id: &str, params: &Value) -> Option<Result<Value, String>> {
+    if id == "ui.elettrico.compose" {
+        edit::finish(&mut app.elettrico);
+    }
     if id == "ui.elettrico.edit" {
         return Some(edit::open(app, params));
     }
     if id == "ui.elettrico.catalog" {
+        if app.elettrico.editing.snapshot.is_some() {
+            return Some(Err("Chiudi la modifica della scatola prima di ricaricare il catalogo.".into()));
+        }
         let result = (|| {
             if app.session.running.is_some() {
                 return Err("Termina il comando corrente prima di ricaricare il catalogo.".to_string());
@@ -117,6 +147,9 @@ pub fn route(app: &mut CadApp, id: &str, params: &Value) -> Option<Result<Value,
         return Some(result);
     }
     if id == "ui.elettrico.library" {
+        if app.elettrico.editing.snapshot.is_some() {
+            return Some(Err("Chiudi la modifica della scatola prima di cambiare libreria.".into()));
+        }
         let path = if params.is_null() {
             app.services.pick_open.as_ref().and_then(|pick| pick())
         } else {
@@ -149,8 +182,11 @@ pub fn route(app: &mut CadApp, id: &str, params: &Value) -> Option<Result<Value,
 }
 
 pub fn show(app: &mut CadApp, ctx: &egui::Context) {
-    edit::show(app, ctx);
+    edit::poll(app, ctx);
     placement_window(app, ctx);
+    if app.session.running.as_ref().is_some_and(|r| r.id == "electrical.place") {
+        return;
+    }
     if app.elettrico.open && !app.elettrico.library_attempted {
         app.elettrico.library_attempted = true;
         if let Some(path) = catalog_environment() {
@@ -164,109 +200,161 @@ pub fn show(app: &mut CadApp, ctx: &egui::Context) {
     let mut insert = false;
     let mut reload = false;
     let mut favorites_changed = false;
+    let mut placement = false;
+    let mut cancel = false;
     let state = &mut app.elettrico;
     let mut open = state.open;
+    let editing = state.editing.snapshot.is_some();
+    let old_factor = state.settings_factor();
     let t = Tokens::get();
-    egui::Window::new("Componi scatola — Elettrico")
+    egui::Window::new(if editing { "Modifica scatola — Elettrico" } else { "Componi scatola — Elettrico" })
         .id(egui::Id::new("elettrico.composer"))
         .open(&mut open)
         .default_width(820.0)
         .min_width(760.0)
         .show(ctx, |ui| {
-            ui.horizontal(|ui| {
-                ui.label("Scatola · posti");
-                let used = state.used();
-                for capacity in [3, 4, 6, 7] {
-                    ui.add_enabled_ui(used <= capacity, |ui| {
-                        ui.selectable_value(&mut state.capacity, capacity, capacity.to_string());
-                    });
-                }
-                if ui.button("Impostazioni").clicked() {
-                    state.settings_open = true;
-                }
-            });
-            ui.horizontal(|ui| {
-                ui.label("Altezza installazione (cm)");
-                ui.add(egui::TextEdit::singleline(&mut state.height).desired_width(65.0).hint_text("100"));
-                ui.label("Facoltativa · vuoto = nessuna scritta");
-            });
-            ui.separator();
-            ui.columns(2, |columns| {
-                if let Some(ui) = columns.get_mut(0) {
-                    ui.heading("Componenti");
-                    ui.add(egui::TextEdit::singleline(&mut state.search).hint_text("Cerca nome o simbolo..."));
-                    egui::ScrollArea::vertical().max_height(290.0).show(ui, |ui| {
-                        ui.push_id("favorites", |ui| {
-                            egui::CollapsingHeader::new("Preferiti").default_open(true).show(ui, |ui| {
-                                let indices: Vec<_> = state
-                                    .catalog
-                                    .components
-                                    .iter()
-                                    .enumerate()
-                                    .filter(|(_, c)| state.favorites.contains(&c.id) && matches_search(c, &state.search))
-                                    .map(|(i, _)| i)
-                                    .collect();
-                                if indices.is_empty() {
-                                    ui.label("Usa la stella per aggiungere un preferito.");
-                                }
-                                for i in indices {
-                                    favorites_changed |= component_row(ui, state, i);
-                                }
-                            });
+            if editing {
+                egui::ComboBox::from_label("Cosa vuoi modificare?").selected_text(state.editing.mode.label()).show_ui(ui, |ui| {
+                    for mode in [edit::Mode::Whole, edit::Mode::Height, edit::Mode::Label] {
+                        ui.selectable_value(&mut state.editing.mode, mode, mode.label());
+                    }
+                });
+                ui.separator();
+            }
+            if !editing || state.editing.mode == edit::Mode::Whole {
+                ui.horizontal(|ui| {
+                    ui.label("Scatola · posti");
+                    let used = state.used();
+                    for capacity in [3, 4, 6, 7] {
+                        ui.add_enabled_ui(used <= capacity, |ui| {
+                            ui.selectable_value(&mut state.capacity, capacity, capacity.to_string());
                         });
-                        favorites_changed |= category_tree(ui, state, &[]);
-                    });
-                }
-                if let Some(ui) = columns.get_mut(1) {
-                    ui.heading("Anteprima CAD");
-                    preview::show(ui, state);
-                    if let Some(error) = &state.library_error {
-                        ui.colored_label(t.warn, error);
-                    } else if state.library.is_none() {
-                        ui.label("Carica la libreria simboli dalle Impostazioni.");
                     }
-                    ui.heading("Composizione");
-                    ui.label(format!("{} / {} posti occupati", state.used(), state.capacity));
-                    let mut remove = None;
-                    for (position, index) in state.items.iter().enumerate() {
-                        if let Some(component) = state.catalog.components.get(*index) {
-                            ui.horizontal(|ui| {
-                                ui.label(format!("{} · {} p", component.name, component.modules));
-                                if ui.small_button("Rimuovi").clicked() {
-                                    remove = Some(position);
-                                }
+                    if ui.button("Impostazioni").clicked() {
+                        state.settings_open = true;
+                    }
+                });
+                height_field(ui, &mut state.height);
+                ui.separator();
+                ui.columns(2, |columns| {
+                    if let Some(ui) = columns.get_mut(0) {
+                        ui.heading("Componenti");
+                        ui.add(egui::TextEdit::singleline(&mut state.search).hint_text("Cerca nome o simbolo..."));
+                        egui::ScrollArea::vertical().max_height(290.0).show(ui, |ui| {
+                            ui.push_id("favorites", |ui| {
+                                egui::CollapsingHeader::new("Preferiti").default_open(true).show(ui, |ui| {
+                                    let indices: Vec<_> = state
+                                        .catalog
+                                        .components
+                                        .iter()
+                                        .enumerate()
+                                        .filter(|(_, c)| state.favorites.contains(&c.id) && matches_search(c, &state.search))
+                                        .map(|(i, _)| i)
+                                        .collect();
+                                    if indices.is_empty() {
+                                        ui.label("Usa la stella per aggiungere un preferito.");
+                                    }
+                                    for i in indices {
+                                        favorites_changed |= component_row(ui, state, i);
+                                    }
+                                });
                             });
+                            favorites_changed |= category_tree(ui, state, &[]);
+                        });
+                    }
+                    if let Some(ui) = columns.get_mut(1) {
+                        ui.heading("Anteprima CAD");
+                        if let Some(position) = preview::show_edit(ui, state, if editing { state.editing.side } else { 0 }) {
+                            state.replacing = Some(position);
                         }
-                    }
-                    if let Some(position) = remove {
-                        state.items.remove(position);
-                    }
-                    if ui.button("Svuota scatola").clicked() {
-                        state.items.clear();
-                    }
-                    ui.separator();
-                    ui.label("Schema dei posti");
-                    ui.horizontal(|ui| {
-                        for index in &state.items {
+                        if let Some(error) = &state.library_error {
+                            ui.colored_label(t.warn, error);
+                        } else if state.library.is_none() {
+                            ui.label("Carica la libreria simboli dalle Impostazioni.");
+                        }
+                        ui.heading("Composizione");
+                        ui.label(format!("{} / {} posti occupati", state.used(), state.capacity));
+                        let mut remove = None;
+                        for (position, index) in state.items.iter().enumerate() {
                             if let Some(component) = state.catalog.components.get(*index) {
-                                ui.group(|ui| {
-                                    ui.label(format!("{} p", component.modules));
+                                ui.horizontal(|ui| {
+                                    ui.label(format!("{} · {} p", component.name, component.modules));
+                                    if ui.small_button("Sostituisci").clicked() {
+                                        state.replacing = Some(position);
+                                    }
+                                    if ui.small_button("Rimuovi").clicked() {
+                                        remove = Some(position);
+                                    }
                                 });
                             }
                         }
-                        for _ in state.used()..state.capacity {
-                            ui.group(|ui| {
-                                ui.label("libero");
-                            });
+                        if let Some(position) = remove {
+                            state.items.remove(position);
+                            state.replacing = None;
+                        }
+                        if ui.button("Svuota scatola").clicked() {
+                            state.items.clear();
+                            state.replacing = None;
+                        }
+                        ui.separator();
+                        if let Some(position) = state.replacing {
+                            if let Some(component) = state.items.get(position).and_then(|i| state.catalog.components.get(*i)) {
+                                ui.label(format!("Scegli nei Componenti il sostituto di {}.", component.name));
+                            }
+                            if ui.small_button("Annulla sostituzione").clicked() {
+                                state.replacing = None;
+                            }
+                        }
+                        ui.label("Schema dei posti");
+                        ui.horizontal(|ui| {
+                            for index in &state.items {
+                                if let Some(component) = state.catalog.components.get(*index) {
+                                    ui.group(|ui| {
+                                        ui.label(format!("{} p", component.modules));
+                                    });
+                                }
+                            }
+                            for _ in state.used()..state.capacity {
+                                ui.group(|ui| {
+                                    ui.label("libero");
+                                });
+                            }
+                        });
+                    }
+                });
+            } else {
+                if state.editing.mode == edit::Mode::Height {
+                    height_field(ui, &mut state.height);
+                } else {
+                    ui.horizontal(|ui| {
+                        ui.label("Posizione altezza");
+                        for (value, label) in [(0, "Sopra"), (1, "Sotto"), (2, "Destra"), (3, "Sinistra")] {
+                            ui.selectable_value(&mut state.editing.side, value, label);
                         }
                     });
                 }
-            });
+                edit::partial_preview(ui, state);
+            }
             ui.separator();
-            insert = ui.add_enabled(!state.items.is_empty() && state.library.is_some(), egui::Button::new("Inserisci nella planimetria")).clicked();
-            ui.colored_label(t.text_dim, "Scegli il punto nel disegno, poi rotazione e posizione dell'altezza.");
+            if editing {
+                let valid = state.editing.mode != edit::Mode::Whole || (!state.items.is_empty() && state.used() <= state.capacity);
+                ui.horizontal(|ui| {
+                    insert = ui.add_enabled(valid, egui::Button::new("Conferma modifiche")).clicked();
+                    if state.editing.mode == edit::Mode::Whole {
+                        placement = ui.add_enabled(valid, egui::Button::new("Riposiziona nel disegno")).clicked();
+                    }
+                    cancel = ui.button("Annulla").clicked();
+                });
+                if let Some(error) = &state.library_error {
+                    ui.colored_label(t.warn, error);
+                }
+            } else {
+                insert =
+                    ui.add_enabled(!state.items.is_empty() && state.library.is_some(), egui::Button::new("Inserisci nella planimetria")).clicked();
+                ui.colored_label(t.text_dim, "Scegli il punto nel disegno, poi rotazione e posizione dell'altezza.");
+            }
         });
-    state.open = open;
+    state.open = open && !cancel;
     egui::Window::new("Impostazioni — Elettrico").open(&mut state.settings_open).show(ctx, |ui| {
         ui.heading("Libreria simboli");
         if let Some(path) = &state.catalog_path {
@@ -274,13 +362,13 @@ pub fn show(app: &mut CadApp, ctx: &egui::Context) {
             ui.label(path);
             ui.label("Nomi, posti, categorie, simboli e valori iniziali si modificano nel JSON. Le stelle sono salvate in preferiti.json.");
         }
-        reload = ui.button("Ricarica catalogo e simboli").clicked();
+        reload = ui.add_enabled(!editing, egui::Button::new("Ricarica catalogo e simboli")).clicked();
         if let Some(library) = &state.library {
             ui.label(format!("{} · {} simboli disponibili", library.name, library.available()));
         } else {
             ui.label("Nessuna libreria caricata");
         }
-        if ui.button("Scegli libreria DXF...").clicked() {
+        if ui.add_enabled(!editing, egui::Button::new("Scegli libreria DXF...")).clicked() {
             choose_library = true;
         }
         ui.separator();
@@ -300,6 +388,17 @@ pub fn show(app: &mut CadApp, ctx: &egui::Context) {
         });
         ui.label("Le impostazioni di questa prima versione restano attive durante la sessione.");
     });
+    if let Some(factor) = &mut state.editing.factor {
+        let new_factor = f64::from(state.scale) * f64::from(state.size_percent) / 100.0 / if state.model_meters { 1000.0 } else { 1.0 };
+        if new_factor != old_factor {
+            *factor *= new_factor / old_factor;
+        }
+    }
+    if editing && !state.open {
+        state.settings_open = false;
+        edit::finish(state);
+        return;
+    }
     if choose_library {
         let _ = route(app, "ui.elettrico.library", &Value::Null);
     }
@@ -312,19 +411,14 @@ pub fn show(app: &mut CadApp, ctx: &egui::Context) {
     if reload {
         let _ = route(app, "ui.elettrico.catalog", &Value::Null);
     }
-    if insert {
+    if editing && (insert || placement) {
+        if let Err(e) = edit::apply(app, placement) {
+            app.elettrico.library_error = Some(e);
+        }
+    } else if insert {
         let result = (|| {
             let state = &app.elettrico;
-            let height = if state.height.trim().is_empty() {
-                None
-            } else {
-                let value =
-                    state.height.trim().replace(',', ".").parse::<f64>().map_err(|_| "Altezza non valida: indica i centimetri.".to_string())?;
-                if !value.is_finite() || !(0.0..=10000.0).contains(&value) {
-                    return Err("Altezza non valida: indica centimetri da 0 a 10000.".to_string());
-                }
-                Some(value)
-            };
+            let height = parse_height(&state.height)?;
             let library = state.library.as_ref().ok_or("Carica la libreria simboli.")?;
             let items: Vec<_> = state
                 .items
@@ -332,7 +426,7 @@ pub fn show(app: &mut CadApp, ctx: &egui::Context) {
                 .filter_map(|i| state.catalog.components.get(*i))
                 .map(|c| json!({"name":c.name,"modules":c.modules,"block":c.block}))
                 .collect();
-            let factor = f64::from(state.scale) * f64::from(state.size_percent) / 100.0 / if state.model_meters { 1000.0 } else { 1.0 };
+            let factor = state.factor();
             let params = json!({"library":library.source_path,"composition":{"capacity":state.capacity,"items":items,"factor":factor,"installation_height_cm":height}});
             app.run("electrical.prepare", params)?;
             app.start("electrical.place");
@@ -348,6 +442,25 @@ pub fn show(app: &mut CadApp, ctx: &egui::Context) {
     }
 }
 
+fn parse_height(text: &str) -> Result<Option<f64>, String> {
+    if text.trim().is_empty() {
+        return Ok(None);
+    }
+    let value = text.trim().replace(',', ".").parse::<f64>().map_err(|_| "Altezza non valida: indica i centimetri.".to_string())?;
+    if !value.is_finite() || !(0.0..=10000.0).contains(&value) {
+        return Err("Altezza ammessa: 0–10000 cm.".into());
+    }
+    Ok(Some(value))
+}
+
+fn height_field(ui: &mut egui::Ui, height: &mut String) {
+    ui.horizontal(|ui| {
+        ui.label("Altezza installazione (cm)");
+        ui.add(egui::TextEdit::singleline(height).desired_width(65.0).hint_text("100"));
+        ui.label("Facoltativa · vuoto = nessuna scritta");
+    });
+}
+
 fn matches_search(c: &catalog::Component, search: &str) -> bool {
     let search = search.trim().to_lowercase();
     search.is_empty() || c.name.to_lowercase().contains(&search) || c.block.to_lowercase().contains(&search)
@@ -359,7 +472,11 @@ fn component_row(ui: &mut egui::Ui, state: &mut State, index: usize) -> bool {
     ui.push_id(index, |ui| {
         ui.horizontal(|ui| {
             let favorite = state.favorites.contains(&c.id);
-            if ui.small_button(if favorite { "★" } else { "☆" }).on_hover_text("Aggiungi o rimuovi dai preferiti").clicked() {
+            if ui
+                .add_enabled(!c.id.starts_with("__saved_"), egui::Button::new(if favorite { "★" } else { "☆" }).small())
+                .on_hover_text("Aggiungi o rimuovi dai preferiti")
+                .clicked()
+            {
                 if favorite {
                     state.favorites.remove(&c.id);
                 } else {
@@ -367,8 +484,14 @@ fn component_row(ui: &mut egui::Ui, state: &mut State, index: usize) -> bool {
                 }
                 changed = true;
             }
-            if ui.add_enabled(state.used() + c.modules <= state.capacity, egui::Button::new(format!("+ {} · {} p", c.name, c.modules))).clicked() {
-                state.items.push(index);
+            if ui
+                .add_enabled(
+                    state.can_choose(c.modules),
+                    egui::Button::new(format!("{} {} · {} p", if state.replacing.is_some() { "→" } else { "+" }, c.name, c.modules)),
+                )
+                .clicked()
+            {
+                state.choose(index);
             }
         });
     });
@@ -411,8 +534,16 @@ fn category_tree(ui: &mut egui::Ui, state: &mut State, prefix: &[String]) -> boo
 
 fn placement_window(app: &mut CadApp, ctx: &egui::Context) {
     if !app.session.running.as_ref().is_some_and(|r| r.id == "electrical.place") {
+        let cancelled_edit = app.session.electrical.as_ref().is_some_and(|p| p.is_edit());
         if app.session.electrical.as_ref().is_some_and(|p| p.phase > 0) {
             app.session.electrical = None;
+        }
+        if app.elettrico.editing.snapshot.is_some() && !app.elettrico.open {
+            if cancelled_edit {
+                app.elettrico.open = true;
+            } else {
+                edit::finish(&mut app.elettrico);
+            }
         }
         return;
     }
@@ -489,11 +620,7 @@ fn placement_window(app: &mut CadApp, ctx: &egui::Context) {
     if cancel || !open {
         app.session.cancel();
         app.session.electrical = None;
-        if editing {
-            app.elettrico.editing.open = true;
-        } else {
-            app.elettrico.open = true;
-        }
+        app.elettrico.open = true;
     } else if next {
         let _ = app.session.input(cadcraft_engine::Input::Enter);
         if app.session.running.is_none() && !editing {
@@ -529,5 +656,20 @@ mod tests {
         assert_eq!(app.session.docs.len(), count);
         assert!(app.run("ui.elettrico.compose", json!({"open": false})).is_ok());
         assert!(!app.elettrico.open);
+    }
+
+    #[test]
+    fn replacing_a_component_keeps_its_position_and_checks_net_occupancy() {
+        let catalog=catalog::Catalog::parse(br#"{"version":1,"library":"synthetic.dxf","components":[{"id":"a","name":"Switch","block":"Switch","modules":1},{"id":"b","name":"Socket","block":"Socket","modules":2}]}"#).unwrap();
+        let mut state = State { capacity: 3, items: vec![0, 1], catalog, replacing: Some(0), ..Default::default() };
+        state.choose(1);
+        assert_eq!(state.items, vec![0, 1]);
+        state.replacing = Some(1);
+        state.choose(0);
+        assert_eq!(state.items, vec![0, 0]);
+        assert!(state.replacing.is_none());
+        state.replacing = Some(0);
+        state.choose(1);
+        assert_eq!(state.items, vec![1, 0]);
     }
 }

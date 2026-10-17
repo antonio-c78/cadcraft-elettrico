@@ -1,27 +1,51 @@
-//! Editing keeps its original document/revision until a single confirmed replacement.
+//! Editing supplies a saved draft to the same composer used for new boxes.
 use super::*;
 use cadcraft_engine::cmd::electrical::Composition;
 
+#[derive(Clone, Copy, Default, PartialEq)]
+pub(super) enum Mode {
+    #[default]
+    Whole,
+    Height,
+    Label,
+}
+impl Mode {
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Whole => "Intera scatola",
+            Self::Height => "Altezza di installazione",
+            Self::Label => "Posizione del testo",
+        }
+    }
+}
+
+struct Saved {
+    capacity: u8,
+    items: Vec<usize>,
+    height: String,
+    scale: u16,
+    percent: u16,
+    meters: bool,
+    search: String,
+    catalog: catalog::Catalog,
+    library: Option<preview::Library>,
+    error: Option<String>,
+}
 #[derive(Default)]
 pub(super) struct State {
     waiting: bool,
-    pub(super) open: bool,
-    snapshot: Value,
-    composition: Option<Composition>,
-    height: String,
-    rotation: f64,
-    side: u8,
-    at: [f64; 2],
-    mode: u8,
-    selected: usize,
-    replacement: usize,
-    error: Option<String>,
+    pub snapshot: Option<Value>,
+    pub mode: Mode,
+    pub side: u8,
+    pub factor: Option<f64>,
+    saved: Option<Saved>,
 }
 
 pub(super) fn open(app: &mut CadApp, params: &Value) -> Result<Value, String> {
     if app.session.running.is_some() {
         return Err("Termina il comando corrente prima di modificare la scatola.".into());
     }
+    finish(&mut app.elettrico);
     if !app.elettrico.library_attempted {
         app.elettrico.library_attempted = true;
         if let Some(path) = catalog_environment() {
@@ -30,7 +54,7 @@ pub(super) fn open(app: &mut CadApp, params: &Value) -> Result<Value, String> {
     }
     app.elettrico.open = false;
     if app.session.selection().is_empty() && params.get("handle").is_none() {
-        app.elettrico.editing = State { waiting: true, ..Default::default() };
+        app.elettrico.editing.waiting = true;
         app.start("electrical.select");
         return Ok(json!({"select":true}));
     }
@@ -39,23 +63,87 @@ pub(super) fn open(app: &mut CadApp, params: &Value) -> Result<Value, String> {
 
 fn load(app: &mut CadApp, params: &Value) -> Result<Value, String> {
     let snapshot = app.run("electrical.read", params.clone())?;
-    let composition: Composition = serde_json::from_value(snapshot["composition"].clone()).map_err(|e| e.to_string())?;
-    let height = composition.installation_height_cm.map(|h| h.to_string()).unwrap_or_default();
-    app.elettrico.editing = State {
-        open: true,
-        height,
-        rotation: snapshot["rotation"].as_f64().unwrap_or(0.0),
-        side: snapshot["side"].as_u64().unwrap_or(0) as u8,
-        at: [snapshot["at"][0].as_f64().unwrap_or(0.0), snapshot["at"][1].as_f64().unwrap_or(0.0)],
-        snapshot,
-        composition: Some(composition),
-        ..Default::default()
-    };
+    hydrate(&mut app.elettrico, snapshot)?;
     Ok(json!({"open":true}))
 }
 
-pub(super) fn show(app: &mut CadApp, ctx: &egui::Context) {
-    if app.elettrico.editing.waiting && app.session.running.as_ref().is_some_and(|r| r.id == "electrical.select") {
+fn hydrate(state: &mut super::State, snapshot: Value) -> Result<(), String> {
+    let c: Composition = serde_json::from_value(snapshot["composition"].clone()).map_err(|e| e.to_string())?;
+    let mut catalog = state.catalog.clone();
+    let mut items = Vec::new();
+    for (position, item) in c.items.iter().enumerate() {
+        let index =
+            catalog.components.iter().position(|v| v.block == item.block && v.name == item.name && v.modules == item.modules).unwrap_or_else(|| {
+                let index = catalog.components.len();
+                catalog.components.push(catalog::Component {
+                    id: format!("__saved_{}_{}", snapshot["handle"], position),
+                    name: item.name.clone(),
+                    block: item.block.clone(),
+                    modules: item.modules,
+                    category: vec!["Nella scatola selezionata".into()],
+                });
+                index
+            });
+        items.push(index);
+    }
+    let library = state.library.as_ref().map(|library| library.remap(&state.catalog.components, &catalog.components));
+    let saved = Saved {
+        capacity: state.capacity,
+        items: state.items.clone(),
+        height: state.height.clone(),
+        scale: state.scale,
+        percent: state.size_percent,
+        meters: state.model_meters,
+        search: state.search.clone(),
+        catalog: state.catalog.clone(),
+        library: state.library.clone(),
+        error: state.library_error.clone(),
+    };
+    state.capacity = c.capacity;
+    state.items = items;
+    state.height = c.installation_height_cm.map(|h| h.to_string()).unwrap_or_default();
+    state.catalog = catalog;
+    state.library = library;
+    state.library_error = None;
+    state.search.clear();
+    state.replacing = None;
+    let percent = c.factor * if state.model_meters { 1000.0 } else { 1.0 } * 100.0 / f64::from(state.scale);
+    if (5.0..=300.0).contains(&percent) && (percent / 5.0 - (percent / 5.0).round()).abs() < 1e-9 {
+        state.size_percent = percent.round() as u16;
+    }
+    state.editing = State {
+        side: snapshot["side"].as_u64().unwrap_or(0) as u8,
+        factor: Some(c.factor),
+        snapshot: Some(snapshot),
+        saved: Some(saved),
+        ..Default::default()
+    };
+    state.open = true;
+    Ok(())
+}
+
+pub(super) fn finish(state: &mut super::State) {
+    let editing = std::mem::take(&mut state.editing);
+    if let Some(saved) = editing.saved {
+        state.capacity = saved.capacity;
+        state.items = saved.items;
+        state.height = saved.height;
+        state.scale = saved.scale;
+        state.size_percent = saved.percent;
+        state.model_meters = saved.meters;
+        state.search = saved.search;
+        state.catalog = saved.catalog;
+        state.library = saved.library;
+        state.library_error = saved.error;
+    }
+    state.replacing = None;
+}
+
+pub(super) fn poll(app: &mut CadApp, ctx: &egui::Context) {
+    if !app.elettrico.editing.waiting {
+        return;
+    }
+    if app.session.running.as_ref().is_some_and(|r| r.id == "electrical.select") {
         egui::Window::new("Seleziona scatola — Elettrico").resizable(false).show(ctx, |ui| {
             ui.label("Fai clic sulla scatola da modificare nella planimetria.");
             if ui.button("Annulla").clicked() {
@@ -63,213 +151,132 @@ pub(super) fn show(app: &mut CadApp, ctx: &egui::Context) {
                 app.elettrico.editing.waiting = false;
             }
         });
-    }
-    if app.elettrico.editing.waiting && app.session.running.is_none() {
+    } else if app.session.running.is_none() {
         app.elettrico.editing.waiting = false;
         if !app.session.selection().is_empty()
             && let Err(e) = load(app, &json!({}))
         {
-            app.elettrico.editing.error = Some(e);
-            app.elettrico.editing.open = true;
+            app.session.echo(e);
         }
     }
-    let mut state = std::mem::take(&mut app.elettrico.editing);
-    if !state.open {
-        app.elettrico.editing = state;
-        return;
+}
+
+pub(super) fn parameters(state: &super::State) -> Result<Value, String> {
+    let mut params = state.editing.snapshot.clone().ok_or("Seleziona una scatola.")?;
+    let mut c: Composition = serde_json::from_value(params["composition"].clone()).map_err(|e| e.to_string())?;
+    match state.editing.mode {
+        Mode::Whole => {
+            c.capacity = state.capacity;
+            c.items = state
+                .items
+                .iter()
+                .map(|i| {
+                    state.catalog.components.get(*i).ok_or("Componente assente dal catalogo.").map(|c| cadcraft_engine::cmd::electrical::Component {
+                        name: c.name.clone(),
+                        block: c.block.clone(),
+                        modules: c.modules,
+                    })
+                })
+                .collect::<Result<Vec<_>, _>>()?;
+            c.factor = state.factor();
+            c.installation_height_cm = parse_height(&state.height)?;
+            params["side"] = json!(state.editing.side);
+        }
+        Mode::Height => {
+            c.installation_height_cm = parse_height(&state.height)?;
+        }
+        Mode::Label => {
+            params["side"] = json!(state.editing.side);
+        }
     }
-    let mut open = state.open;
-    let mut apply = false;
-    let mut placement = false;
-    let mut cancel = false;
-    egui::Window::new("Modifica scatola — Elettrico").open(&mut open).default_width(780.0).show(ctx, |ui| {
-        ui.label("L'originale rimane nel disegno fino alla conferma. Annulla lascia tutto invariato.");
-        ui.label("Cambiando scheda riparti dalla scatola originale.");
-        ui.horizontal_wrapped(|ui| {
-            for (value, name) in [(0, "Tutta la scatola"), (1, "Un componente"), (2, "Solo altezza"), (3, "Posizione del testo")] {
-                if ui.selectable_value(&mut state.mode, value, name).changed() {
-                    state.error = None;
-                    state.selected = 0;
-                    // Each shortcut starts from the saved box, so hidden edits cannot leak into another mode.
-                    state.composition = serde_json::from_value(state.snapshot["composition"].clone()).ok();
-                    state.height = state.composition.as_ref().and_then(|c| c.installation_height_cm).map(|h| h.to_string()).unwrap_or_default();
-                    state.rotation = state.snapshot["rotation"].as_f64().unwrap_or(0.0);
-                    state.side = state.snapshot["side"].as_u64().unwrap_or(0) as u8;
-                    state.at = [state.snapshot["at"][0].as_f64().unwrap_or(0.0), state.snapshot["at"][1].as_f64().unwrap_or(0.0)];
-                }
-            }
+    params["composition"] = json!(c);
+    if let Some(library) = &state.library {
+        params["library"] = json!(library.source_path);
+    }
+    Ok(params)
+}
+
+pub(super) fn apply(app: &mut CadApp, placement: bool) -> Result<(), String> {
+    let params = parameters(&app.elettrico)?;
+    app.run(if placement { "electrical.edit.prepare" } else { "electrical.update" }, params)?;
+    app.elettrico.open = false;
+    app.elettrico.settings_open = false;
+    if placement {
+        app.start("electrical.place");
+    } else {
+        finish(&mut app.elettrico);
+    }
+    Ok(())
+}
+
+pub(super) fn partial_preview(ui: &mut egui::Ui, state: &super::State) {
+    let Some(snapshot) = &state.editing.snapshot else { return };
+    let Ok(c) = serde_json::from_value::<Composition>(snapshot["composition"].clone()) else { return };
+    let items: Vec<_> = c
+        .items
+        .iter()
+        .filter_map(|item| state.catalog.components.iter().position(|v| v.block == item.block && v.name == item.name && v.modules == item.modules))
+        .collect();
+    let height =
+        if state.editing.mode == Mode::Height { state.height.clone() } else { c.installation_height_cm.map(|h| h.to_string()).unwrap_or_default() };
+    let side = if state.editing.mode == Mode::Label { state.editing.side } else { snapshot["side"].as_u64().unwrap_or(0) as u8 };
+    let preview_state =
+        super::State { capacity: c.capacity, items, height, catalog: state.catalog.clone(), library: state.library.clone(), ..Default::default() };
+    let _ = preview::show_edit(ui, &preview_state, side);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    fn snapshot() -> Value {
+        json!({"handle":"1A","uid":1,"revision":2,"at":[120,230],"rotation":90,"side":2,
+            "composition":{"capacity":7,"factor":0.123456,"installation_height_cm":100,
+                "items":[{"name":"Old switch","block":"Switch","modules":2}]}})
+    }
+    #[test]
+    fn shared_composer_preserves_snapshot_and_restores_the_new_box_draft() {
+        let mut state = super::super::State { capacity: 4, height: "80".into(), ..Default::default() };
+        state.catalog.components.push(catalog::Component {
+            id: "switch".into(),
+            name: "Renamed switch".into(),
+            block: "Switch".into(),
+            modules: 1,
+            category: vec![],
         });
-        ui.separator();
-        if let Some(c) = &mut state.composition {
-            let used: u16 = c.items.iter().map(|i| u16::from(i.modules)).sum();
-            if state.mode == 0 {
-                ui.horizontal(|ui| {
-                    ui.label("Posti disponibili nel supporto");
-                    for n in [3, 4, 6, 7] {
-                        ui.selectable_value(&mut c.capacity, n, n.to_string());
-                    }
-                });
-                ui.label("6 e 7 posti restano distinti: la compatibilità della scatola da incasso dipende dalla serie.");
-            }
-            if state.mode <= 1 {
-                ui.label(format!("{used} / {} posti occupati · seleziona il componente da cambiare", c.capacity));
-                let mut remove = None;
-                for (index, item) in c.items.iter().enumerate() {
-                    ui.horizontal(|ui| {
-                        ui.selectable_value(&mut state.selected, index, format!("{}. {} · {} p", index + 1, item.name, item.modules));
-                        if state.mode == 0 && ui.small_button(format!("Rimuovi {}", index + 1)).clicked() {
-                            remove = Some(index);
-                        }
-                    });
-                }
-                if let Some(index) = remove {
-                    c.items.remove(index);
-                    state.selected = state.selected.min(c.items.len().saturating_sub(1));
-                }
-                egui::ComboBox::from_label("Nuovo componente")
-                    .selected_text(app.elettrico.catalog.components.get(state.replacement).map(|c| c.name.as_str()).unwrap_or("Carica il catalogo"))
-                    .show_ui(ui, |ui| {
-                        for (index, component) in app.elettrico.catalog.components.iter().enumerate() {
-                            ui.selectable_value(&mut state.replacement, index, format!("{} · {} p", component.name, component.modules));
-                        }
-                    });
-                if let Some(component) = app.elettrico.catalog.components.get(state.replacement) {
-                    let occupied: u16 = c.items.iter().map(|i| u16::from(i.modules)).sum();
-                    let replaced = c.items.get(state.selected).map(|i| u16::from(i.modules)).unwrap_or(0);
-                    ui.horizontal(|ui| {
-                        if ui
-                            .add_enabled(
-                                !c.items.is_empty() && occupied - replaced + u16::from(component.modules) <= u16::from(c.capacity),
-                                egui::Button::new("Sostituisci selezionato"),
-                            )
-                            .clicked()
-                            && let Some(item) = c.items.get_mut(state.selected)
-                        {
-                            *item = cadcraft_engine::cmd::electrical::Component {
-                                name: component.name.clone(),
-                                block: component.block.clone(),
-                                modules: component.modules,
-                            };
-                        }
-                        if state.mode == 0
-                            && ui
-                                .add_enabled(
-                                    occupied + u16::from(component.modules) <= u16::from(c.capacity),
-                                    egui::Button::new("Aggiungi componente"),
-                                )
-                                .clicked()
-                        {
-                            c.items.push(cadcraft_engine::cmd::electrical::Component {
-                                name: component.name.clone(),
-                                block: component.block.clone(),
-                                modules: component.modules,
-                            });
-                        }
-                        if state.mode == 0 && ui.button("Riparti da scatola vuota").clicked() {
-                            c.items.clear();
-                        }
-                    });
-                }
-            }
-            if state.mode == 0 || state.mode == 2 {
-                ui.horizontal(|ui| {
-                    ui.label("Altezza installazione (cm)");
-                    ui.add(egui::TextEdit::singleline(&mut state.height).desired_width(80.0));
-                    ui.label("Vuoto = nessuna scritta");
-                });
-            }
-            if state.mode == 0 || state.mode == 3 {
-                ui.horizontal(|ui| {
-                    ui.label("Posizione altezza");
-                    for (n, name) in [(0, "Sopra"), (1, "Sotto"), (2, "Destra"), (3, "Sinistra")] {
-                        ui.selectable_value(&mut state.side, n, name);
-                    }
-                });
-            }
-            if state.mode == 0 {
-                ui.horizontal(|ui| {
-                    ui.label("Rotazione");
-                    ui.add(egui::DragValue::new(&mut state.rotation).range(-360.0..=360.0).suffix("°"));
-                });
-                ui.horizontal(|ui| {
-                    ui.label("Punto X / Y");
-                    for v in &mut state.at {
-                        ui.add(egui::DragValue::new(v));
-                    }
-                });
-                ui.horizontal(|ui| {
-                    ui.label("Dimensione di un posto (unità del disegno)");
-                    let mut width = c.factor * 3.0;
-                    if ui.add(egui::DragValue::new(&mut width).range(0.000015..=9000.0)).changed() {
-                        c.factor = width / 3.0;
-                    }
-                });
-            }
-            ui.label("Anteprima composizione · clicca un simbolo per selezionarlo; verifica la rotazione nel disegno");
-            // Reuse the composer's actual CAD symbol cache for the proposed composition.
-            let indices: Option<Vec<usize>> =
-                c.items.iter().map(|i| app.elettrico.catalog.components.iter().position(|v| v.block == i.block && v.modules == i.modules)).collect();
-            if let Some(items) = indices {
-                let preview_state = super::State {
-                    capacity: c.capacity,
-                    items,
-                    height: state.height.clone(),
-                    catalog: app.elettrico.catalog.clone(),
-                    library: app.elettrico.library.clone(),
-                    ..Default::default()
-                };
-                if let Some(selected) = preview::show_edit(ui, &preview_state, state.side) {
-                    state.selected = selected;
-                }
-            } else {
-                ui.label("Alcuni simboli non sono nel catalogo attuale. Le modifiche alla sola altezza conservano il disegno originale.");
-            }
-            let used: u16 = c.items.iter().map(|i| u16::from(i.modules)).sum();
-            if used > u16::from(c.capacity) {
-                ui.colored_label(Tokens::get().warn, "Troppi posti occupati: rimuovi o sostituisci componenti prima di confermare.");
-            }
-            let valid = !c.items.is_empty() && used <= u16::from(c.capacity);
-            ui.horizontal(|ui| {
-                apply = ui.add_enabled(valid, egui::Button::new("Applica modifica")).clicked();
-                placement = ui.add_enabled(valid && state.mode == 0, egui::Button::new("Rivedi inserimento nel disegno")).clicked();
-                cancel = ui.button("Annulla").clicked();
-            });
-        }
-        if let Some(error) = &state.error {
-            ui.colored_label(Tokens::get().warn, error);
-        }
-    });
-    state.open = open && !cancel;
-    if apply || placement {
-        let result = (|| {
-            let mut c = state.composition.clone().ok_or("Scatola non disponibile.")?;
-            c.installation_height_cm = if state.height.trim().is_empty() {
-                None
-            } else {
-                let value = state.height.trim().replace(',', ".").parse::<f64>().map_err(|_| "Altezza non valida.")?;
-                if !value.is_finite() || !(0.0..=10000.0).contains(&value) {
-                    return Err("Altezza ammessa: 0–10000 cm.".to_string());
-                }
-                Some(value)
-            };
-            let mut params = state.snapshot.clone();
-            params["composition"] = json!(c);
-            params["rotation"] = json!(state.rotation);
-            params["side"] = json!(state.side);
-            params["at"] = json!(state.at);
-            if let Some(library) = &app.elettrico.library {
-                params["library"] = json!(library.source_path);
-            }
-            app.run(if placement { "electrical.edit.prepare" } else { "electrical.update" }, params)?;
-            if placement {
-                app.start("electrical.place");
-            }
-            Ok::<(), String>(())
-        })();
-        match result {
-            Ok(()) => state.open = false,
-            Err(e) => state.error = Some(e),
-        }
+        state.items = vec![0];
+        hydrate(&mut state, snapshot()).unwrap();
+        assert_eq!(state.capacity, 7);
+        assert_eq!(state.used(), 2);
+        let params = parameters(&state).unwrap();
+        assert_eq!(params["composition"]["factor"], 0.123456);
+        assert_eq!(params["composition"]["items"][0]["name"], "Old switch");
+        assert_eq!(params["at"], json!([120, 230]));
+        assert_eq!(params["rotation"], 90);
+        finish(&mut state);
+        assert_eq!(state.capacity, 4);
+        assert_eq!(state.height, "80");
+        assert_eq!(state.catalog.components.len(), 1);
+        assert_eq!(state.used(), 1);
+        assert!(state.editing.snapshot.is_none());
     }
-    app.elettrico.editing = state;
+    #[test]
+    fn partial_modes_do_not_apply_hidden_composition_or_label_changes() {
+        let mut state = super::super::State::default();
+        hydrate(&mut state, snapshot()).unwrap();
+        state.capacity = 3;
+        state.items.clear();
+        state.height = "120".into();
+        state.editing.side = 1;
+        state.editing.mode = Mode::Height;
+        let params = parameters(&state).unwrap();
+        assert_eq!(params["composition"]["capacity"], 7);
+        assert_eq!(params["composition"]["items"].as_array().unwrap().len(), 1);
+        assert_eq!(params["composition"]["installation_height_cm"], 120.0);
+        assert_eq!(params["side"], 2);
+        state.editing.mode = Mode::Label;
+        state.height = "invalid".into();
+        let params = parameters(&state).unwrap();
+        assert_eq!(params["composition"]["installation_height_cm"], 100.0);
+        assert_eq!(params["side"], 1);
+    }
 }
