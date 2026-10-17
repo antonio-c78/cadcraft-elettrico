@@ -671,6 +671,7 @@ pub struct Session {
     lisp_last: Option<std::result::Result<lisp::value::Value, String>>,
     /// What the last HATCHPICK kept (the Hatch and Gradient dialog's picks).
     pub hatch_picks: Option<cmd::hatch::HatchPicks>,
+    pub electrical: Option<cmd::electrical::Placement>,
 }
 
 impl Default for Session {
@@ -719,6 +720,7 @@ impl Session {
             lisp: lisp::LispState::default(),
             lisp_last: None,
             hatch_picks: None,
+            electrical: None,
         }
     }
     pub fn new_drawing(&mut self, metric: bool) -> usize {

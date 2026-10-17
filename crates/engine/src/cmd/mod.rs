@@ -12,6 +12,7 @@ mod draw;
 mod draw2;
 mod draworder;
 mod edit;
+pub mod electrical;
 mod exchange;
 pub mod file;
 mod gripcmds;
@@ -183,6 +184,7 @@ pub fn command_specs() -> &'static [CommandSpec] {
         v.extend(hatch::specs());
         v.extend(overkill::specs());
         v.extend(blocks::specs());
+        v.extend(electrical::specs());
         v.extend(modify::specs());
         v.extend(draworder::specs());
         v.extend(array::specs());

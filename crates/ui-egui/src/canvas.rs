@@ -1791,7 +1791,7 @@ pub fn show(app: &mut CadApp, ui: &mut egui::Ui) {
             let list = rebuilt_preview(&st.doc, extra.iter(), scale);
             draw_list(&painter, &xf, &list, bg, false);
         }
-    } else if let (Some(c), true) = (app.canvas.cursor, app.session.prompting()) {
+    } else if let (Some(c), true) = (app.canvas.cursor.or_else(|| app.session.electrical.as_ref().and_then(|p| p.point)), app.session.prompting()) {
         let ents = app.session.preview(c);
         if !ents.is_empty()
             && let Ok(st) = app.session.state()

@@ -29,6 +29,7 @@ pub struct State {
     library: Option<preview::Library>,
     library_error: Option<String>,
     library_attempted: bool,
+    model_meters: bool,
 }
 
 impl Default for State {
@@ -44,6 +45,7 @@ impl Default for State {
             library: None,
             library_error: None,
             library_attempted: false,
+            model_meters: false,
         }
     }
 }
@@ -88,6 +90,7 @@ pub fn route(app: &mut CadApp, id: &str, params: &Value) -> Option<Result<Value,
 }
 
 pub fn show(app: &mut CadApp, ctx: &egui::Context) {
+    placement_window(app, ctx);
     if app.elettrico.open && !app.elettrico.library_attempted {
         app.elettrico.library_attempted = true;
         #[cfg(not(target_arch = "wasm32"))]
@@ -96,6 +99,7 @@ pub fn show(app: &mut CadApp, ctx: &egui::Context) {
         }
     }
     let mut choose_library = false;
+    let mut insert = false;
     let state = &mut app.elettrico;
     let mut open = state.open;
     let t = Tokens::get();
@@ -178,7 +182,8 @@ pub fn show(app: &mut CadApp, ctx: &egui::Context) {
                 }
             });
             ui.separator();
-            ui.colored_label(t.text_dim, "L'anteprima non modifica la planimetria. Inserimento nel disegno in preparazione.");
+            insert = ui.add_enabled(!state.items.is_empty() && state.library.is_some(), egui::Button::new("Inserisci nella planimetria")).clicked();
+            ui.colored_label(t.text_dim, "Scegli il punto nel disegno, poi rotazione e posizione dell'altezza.");
         });
     state.open = open;
     egui::Window::new("Impostazioni — Elettrico").open(&mut state.settings_open).show(ctx, |ui| {
@@ -201,10 +206,122 @@ pub fn show(app: &mut CadApp, ctx: &egui::Context) {
                 ui.selectable_value(&mut state.size_percent, percent, format!("{percent} %"));
             }
         });
+        ui.horizontal(|ui| {
+            ui.label("Unità della planimetria");
+            ui.selectable_value(&mut state.model_meters, false, "Millimetri");
+            ui.selectable_value(&mut state.model_meters, true, "Metri");
+        });
         ui.label("Le impostazioni di questa prima versione restano attive durante la sessione.");
     });
     if choose_library {
         let _ = route(app, "ui.elettrico.library", &Value::Null);
+    }
+    if insert {
+        let result = (|| {
+            let state = &app.elettrico;
+            let height = if state.height.trim().is_empty() {
+                None
+            } else {
+                let value =
+                    state.height.trim().replace(',', ".").parse::<f64>().map_err(|_| "Altezza non valida: indica i centimetri.".to_string())?;
+                if !value.is_finite() || !(0.0..=10000.0).contains(&value) {
+                    return Err("Altezza non valida: indica centimetri da 0 a 10000.".to_string());
+                }
+                Some(value)
+            };
+            let library = state.library.as_ref().ok_or("Carica la libreria simboli.")?;
+            let items: Vec<_> = state
+                .items
+                .iter()
+                .filter_map(|i| COMPONENTS.get(*i))
+                .map(|(name, modules, block)| json!({"name":name,"modules":modules,"block":block}))
+                .collect();
+            let factor = f64::from(state.scale) * f64::from(state.size_percent) / 100.0 / if state.model_meters { 1000.0 } else { 1.0 };
+            let params = json!({"library":library.source_path,"composition":{"capacity":state.capacity,"items":items,"factor":factor,"installation_height_cm":height}});
+            app.run("electrical.prepare", params)?;
+            app.start("electrical.place");
+            Ok::<(), String>(())
+        })();
+        match result {
+            Ok(()) => {
+                app.elettrico.open = false;
+                app.elettrico.library_error = None;
+            }
+            Err(e) => app.elettrico.library_error = Some(e),
+        }
+    }
+}
+
+fn placement_window(app: &mut CadApp, ctx: &egui::Context) {
+    if !app.session.running.as_ref().is_some_and(|r| r.id == "electrical.place") {
+        if app.session.electrical.as_ref().is_some_and(|p| p.phase > 0) {
+            app.session.electrical = None;
+        }
+        return;
+    }
+    let Some(p) = &app.session.electrical else { return };
+    let phase = p.phase;
+    let mut rotation = p.rotation;
+    let mut side = p.side;
+    let previous = (rotation, side);
+    let error = p.error.clone();
+    let mut cancel = false;
+    let mut next = false;
+    let mut open = true;
+    egui::Window::new(match phase {
+        0 => "Inserisci scatola",
+        1 => "Rotazione della scatola",
+        _ => "Posizione dell'altezza",
+    })
+    .id(egui::Id::new("elettrico.placement"))
+    .open(&mut open)
+    .default_pos(egui::pos2(30.0, 100.0))
+    .resizable(false)
+    .show(ctx, |ui| {
+        match phase {
+            0 => {
+                ui.label("Scegli il punto nella planimetria.");
+            }
+            1 => {
+                ui.label("Controlla l'anteprima nel disegno.");
+                ui.horizontal(|ui| {
+                    for angle in [0, 90, 180, 270] {
+                        ui.selectable_value(&mut rotation, f64::from(angle), format!("{angle}°"));
+                    }
+                });
+                ui.add(egui::DragValue::new(&mut rotation).range(-360.0..=360.0).suffix("°"));
+            }
+            _ => {
+                ui.label("La scritta rimane orizzontale.");
+                ui.horizontal(|ui| {
+                    for (value, label) in [(0, "Sopra"), (1, "Sotto"), (2, "Destra"), (3, "Sinistra")] {
+                        ui.selectable_value(&mut side, value, label);
+                    }
+                });
+            }
+        }
+        if let Some(e) = &error {
+            ui.colored_label(Tokens::get().warn, e);
+        }
+        ui.horizontal(|ui| {
+            if phase > 0 {
+                next = ui.button(if phase == 1 { "Conferma rotazione" } else { "Inserisci scatola" }).clicked();
+            }
+            cancel = ui.button("Annulla").clicked();
+        });
+    });
+    if previous != (rotation, side) {
+        let _ = app.run("electrical.options", json!({"rotation":rotation,"side":side}));
+    }
+    if cancel || !open {
+        app.session.cancel();
+        app.session.electrical = None;
+        app.elettrico.open = true;
+    } else if next {
+        let _ = app.session.input(cadcraft_engine::Input::Enter);
+        if app.session.running.is_none() {
+            app.elettrico.open = true;
+        }
     }
 }
 

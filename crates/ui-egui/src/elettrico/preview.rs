@@ -17,6 +17,7 @@ const MAX_LIBRARY_BYTES: u64 = 16 * 1024 * 1024;
 
 pub(super) struct Library {
     pub name: String,
+    pub source_path: String,
     symbols: Vec<Option<Arc<DisplayList>>>,
 }
 
@@ -30,7 +31,8 @@ impl Library {
         let hooks = cadcraft_engine::cmd::file::io().ok_or("Lettore DXF non disponibile.")?;
         let drawing = (hooks.read)(&bytes, path)?;
         let name = std::path::Path::new(path).file_name().map(|name| name.to_string_lossy().into_owned()).unwrap_or_default();
-        let library = Self::from_drawing(&drawing, name);
+        let mut library = Self::from_drawing(&drawing, name);
+        library.source_path = path.to_string();
         if library.available() == 0 {
             return Err("La libreria non contiene i simboli del compositore. Scegli simboli-generali.dxf.".into());
         }
@@ -56,7 +58,7 @@ impl Library {
                 Some(Arc::new(list))
             })
             .collect();
-        Self { name, symbols }
+        Self { name, source_path: String::new(), symbols }
     }
 }
 
