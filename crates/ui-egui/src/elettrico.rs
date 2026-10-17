@@ -6,6 +6,7 @@ use crate::{CadApp, theme::Tokens};
 
 mod catalog;
 mod edit;
+mod manager;
 mod preview;
 
 fn catalog_environment() -> Option<String> {
@@ -37,6 +38,7 @@ pub struct State {
     search: String,
     editing: edit::State,
     replacing: Option<usize>,
+    manager: manager::State,
 }
 
 impl Default for State {
@@ -59,6 +61,7 @@ impl Default for State {
             search: String::new(),
             editing: edit::State::default(),
             replacing: None,
+            manager: manager::State::default(),
         }
     }
 }
@@ -69,7 +72,7 @@ impl State {
         u16::from(self.used()) - u16::from(replaced) + u16::from(modules) <= u16::from(self.capacity)
     }
     fn choose(&mut self, index: usize) {
-        if !self.catalog.components.get(index).is_some_and(|c| self.can_choose(c.modules)) {
+        if !self.catalog.components.get(index).is_some_and(|c| c.composer && self.can_choose(c.modules)) {
             return;
         }
         if let Some(position) = self.replacing.take() {
@@ -92,6 +95,9 @@ impl State {
 }
 
 pub fn route(app: &mut CadApp, id: &str, params: &Value) -> Option<Result<Value, String>> {
+    if id == "ui.elettrico.manager" {
+        return Some(manager::command(app, params));
+    }
     if id == "ui.elettrico.compose" {
         edit::finish(&mut app.elettrico);
     }
@@ -187,7 +193,7 @@ pub fn show(app: &mut CadApp, ctx: &egui::Context) {
     if app.session.running.as_ref().is_some_and(|r| r.id == "electrical.place") {
         return;
     }
-    if app.elettrico.open && !app.elettrico.library_attempted {
+    if !app.elettrico.library_attempted && (app.elettrico.open || catalog_environment().is_some()) {
         app.elettrico.library_attempted = true;
         if let Some(path) = catalog_environment() {
             let _ = route(app, "ui.elettrico.catalog", &json!({"path": path}));
@@ -196,6 +202,7 @@ pub fn show(app: &mut CadApp, ctx: &egui::Context) {
                 Some("Carica un catalogo JSON con ui.elettrico.catalog oppure avvia CADCraft Elettrico dal suo collegamento.".into());
         }
     }
+    manager::show(app, ctx);
     let mut choose_library = false;
     let mut insert = false;
     let mut reload = false;
@@ -463,7 +470,7 @@ fn height_field(ui: &mut egui::Ui, height: &mut String) {
 
 fn matches_search(c: &catalog::Component, search: &str) -> bool {
     let search = search.trim().to_lowercase();
-    search.is_empty() || c.name.to_lowercase().contains(&search) || c.block.to_lowercase().contains(&search)
+    c.composer && (search.is_empty() || c.name.to_lowercase().contains(&search) || c.block.to_lowercase().contains(&search))
 }
 
 fn component_row(ui: &mut egui::Ui, state: &mut State, index: usize) -> bool {
@@ -632,6 +639,18 @@ fn placement_window(app: &mut CadApp, ctx: &egui::Context) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn standalone_only_symbols_cannot_be_chosen_as_box_components() {
+        let catalog = catalog::Catalog::parse(
+            br#"{"version":2,"library":"x.dxf","components":[{"id":"junction","name":"Junction","block":"Junction","modules":0,"composer":false}]}"#,
+        )
+        .unwrap();
+        let mut state = State { catalog, ..Default::default() };
+        state.choose(0);
+        assert!(state.items.is_empty());
+        assert!(!matches_search(&state.catalog.components[0], ""));
+    }
 
     #[test]
     fn unel_uses_two_slots_and_empty_slots_stay_available() {

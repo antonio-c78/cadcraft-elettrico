@@ -81,6 +81,7 @@ fn hydrate(state: &mut super::State, snapshot: Value) -> Result<(), String> {
                     block: item.block.clone(),
                     modules: item.modules,
                     category: vec!["Nella scatola selezionata".into()],
+                    ..Default::default()
                 });
                 index
             });
@@ -242,6 +243,7 @@ mod tests {
             block: "Switch".into(),
             modules: 1,
             category: vec![],
+            ..Default::default()
         });
         state.items = vec![0];
         hydrate(&mut state, snapshot()).unwrap();

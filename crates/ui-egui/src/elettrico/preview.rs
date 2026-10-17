@@ -23,6 +23,9 @@ pub(super) struct Library {
 }
 
 impl Library {
+    pub fn symbol(&self, index: usize) -> Option<&DisplayList> {
+        self.symbols.get(index).and_then(Option::as_deref)
+    }
     pub fn remap(&self, old: &[Component], new: &[Component]) -> Self {
         Self {
             name: self.name.clone(),
@@ -41,7 +44,7 @@ impl Library {
         let name = std::path::Path::new(path).file_name().map(|name| name.to_string_lossy().into_owned()).unwrap_or_default();
         let mut library = Self::from_drawing(&drawing, name, components);
         library.source_path = path.to_string();
-        if library.available() == 0 {
+        if library.available() == 0 && !components.is_empty() {
             return Err("Nessun simbolo del catalogo trovato: verifica i nomi dei blocchi e la libreria DXF scelta.".into());
         }
         Ok(library)
@@ -101,6 +104,24 @@ fn fit_symbol(bounds: Bounds2, slot: Rect, unit: f32) -> Option<Xf> {
     }
     let scale = (f64::from(slot.width() - 0.65 * unit) / width.max(1e-9)).min(f64::from(slot.height() - 1.1 * unit) / height.max(1e-9));
     (scale.is_finite() && scale > 0.0).then(|| Xf { rect: slot, center: bounds.center(), scale })
+}
+
+pub(super) fn show_symbol(ui: &mut egui::Ui, list: Option<&DisplayList>) {
+    let (rect, _) = ui.allocate_exact_size(vec2(ui.available_width().max(100.0), 150.0), egui::Sense::hover());
+    let painter = ui.painter_at(rect);
+    let background = crate::theme::Tokens::DARK.canvas;
+    painter.rect_filled(rect, 3.0, background);
+    let inner = rect.shrink(18.0);
+    if let Some(list) = list {
+        let bounds = list.bounds;
+        let scale = (f64::from(inner.width()) / bounds.width().max(1e-9)).min(f64::from(inner.height()) / bounds.height().max(1e-9));
+        if !bounds.is_empty() && bounds.center().is_finite() && scale.is_finite() && scale > 0.0 {
+            let transform = Xf { rect: inner, center: bounds.center(), scale };
+            crate::canvas::draw_list(&painter, &transform, list, Rgb(background.r(), background.g(), background.b()), false);
+            return;
+        }
+    }
+    painter.text(rect.center(), egui::Align2::CENTER_CENTER, "Anteprima non disponibile", crate::theme::small(), Color32::WHITE);
 }
 
 pub(super) fn show_edit(ui: &mut egui::Ui, state: &State, side: u8) -> Option<usize> {
@@ -175,7 +196,14 @@ mod tests {
         let line = session.execute("line", &json!({"points": [[100, 200], [140, 220]]})).unwrap();
         session.execute("block", &json!({"name": "SyntheticSwitch", "base": [0, 0], "handles": line["handles"]})).unwrap();
         let before = session.doc().unwrap().clone();
-        let component = Component { id: "switch".into(), name: "Switch".into(), block: "SyntheticSwitch".into(), modules: 1, category: vec![] };
+        let component = Component {
+            id: "switch".into(),
+            name: "Switch".into(),
+            block: "SyntheticSwitch".into(),
+            modules: 1,
+            category: vec![],
+            ..Default::default()
+        };
         let library = Library::from_drawing(&before, "synthetic".into(), &[component]);
         assert_eq!(library.available(), 1);
         assert_eq!(session.doc().unwrap().model.len(), before.model.len());

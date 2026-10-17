@@ -3,17 +3,60 @@ use std::collections::BTreeSet;
 
 use serde::{Deserialize, Serialize};
 
-#[derive(Clone, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub(super) struct Component {
     pub id: String,
     pub name: String,
     pub block: String,
+    #[serde(default)]
     pub modules: u8,
+    #[serde(default = "yes")]
+    pub composer: bool,
+    #[serde(default = "yes")]
+    pub standalone: bool,
+    #[serde(default = "paper_size")]
+    pub width_mm: f64,
+    #[serde(default = "paper_size")]
+    pub height_mm: f64,
+    #[serde(default = "center")]
+    pub anchor: [f64; 2],
+    #[serde(default)]
+    pub notes: String,
     #[serde(default)]
     pub category: Vec<String>,
+    #[serde(flatten)]
+    pub extra: serde_json::Map<String, serde_json::Value>,
 }
 
-#[derive(Clone, Deserialize)]
+fn yes() -> bool {
+    true
+}
+fn paper_size() -> f64 {
+    8.0
+}
+fn center() -> [f64; 2] {
+    [0.5, 0.5]
+}
+impl Default for Component {
+    fn default() -> Self {
+        Self {
+            id: String::new(),
+            name: String::new(),
+            block: String::new(),
+            modules: 1,
+            composer: true,
+            standalone: true,
+            width_mm: 8.0,
+            height_mm: 8.0,
+            anchor: center(),
+            notes: String::new(),
+            category: Vec::new(),
+            extra: Default::default(),
+        }
+    }
+}
+
+#[derive(Clone, Serialize, Deserialize)]
 pub(super) struct Defaults {
     pub scale: u16,
     pub size_percent: u16,
@@ -26,13 +69,17 @@ impl Default for Defaults {
     }
 }
 
-#[derive(Clone, Default, Deserialize)]
+#[derive(Clone, Default, Serialize, Deserialize)]
 pub(super) struct Catalog {
     pub version: u32,
     pub library: String,
     #[serde(default)]
     pub defaults: Defaults,
     pub components: Vec<Component>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub favorites: Option<BTreeSet<String>>,
+    #[serde(flatten)]
+    pub extra: serde_json::Map<String, serde_json::Value>,
 }
 
 impl Catalog {
@@ -42,13 +89,8 @@ impl Catalog {
         }
         let bytes = bytes.strip_prefix(b"\xef\xbb\xbf").unwrap_or(bytes);
         let catalog: Self = serde_json::from_slice(bytes).map_err(|e| format!("Catalogo JSON: {e}"))?;
-        if catalog.version != 1
-            || catalog.components.is_empty()
-            || catalog.components.len() > 512
-            || catalog.library.is_empty()
-            || catalog.library.len() > 32768
-        {
-            return Err("Catalogo non valido: versione 1, da 1 a 512 componenti e libreria DXF richiesta.".into());
+        if ![1, 2].contains(&catalog.version) || catalog.components.len() > 512 || catalog.library.is_empty() || catalog.library.len() > 32768 {
+            return Err("Catalogo non valido: versione 1 o 2, massimo 512 simboli e libreria DXF richiesta.".into());
         }
         let defaults = &catalog.defaults;
         if !(1..=1000).contains(&defaults.scale)
@@ -66,13 +108,23 @@ impl Catalog {
                 || c.name.len() > 255
                 || c.block.is_empty()
                 || c.block.len() > 255
-                || !(1..=7).contains(&c.modules)
+                || (c.composer && !(1..=7).contains(&c.modules))
+                || c.modules > 7
+                || !c.width_mm.is_finite()
+                || !(0.1..=200.0).contains(&c.width_mm)
+                || !c.height_mm.is_finite()
+                || !(0.1..=200.0).contains(&c.height_mm)
+                || c.anchor.iter().any(|v| !v.is_finite() || !(0.0..=1.0).contains(v))
+                || c.notes.len() > 4096
                 || c.category.len() > 4
                 || c.category.iter().any(|s| s.is_empty() || s.len() > 80)
                 || !ids.insert(&c.id)
             {
                 return Err(format!("Componente non valido o ID duplicato: {}. Posti ammessi: 1–7; massimo quattro livelli di categorie.", c.id));
             }
+        }
+        if catalog.favorites.as_ref().is_some_and(|f| f.len() > 512 || f.iter().any(|id| id.is_empty() || id.len() > 255)) {
+            return Err("Elenco preferiti non valido.".into());
         }
         Ok(catalog)
     }
@@ -92,6 +144,9 @@ impl Catalog {
                 .position(|c| c.id == previous.id)
                 .ok_or_else(|| format!("Rimuovi prima dalla composizione il componente eliminato dal catalogo: {}.", previous.name))?;
             if let Some(component) = self.components.get(index) {
+                if !component.composer {
+                    return Err(format!("Rimuovi prima dalla composizione: {} non è più disponibile nel compositore.", component.name));
+                }
                 occupied += u16::from(component.modules);
             }
             result.push(index);
@@ -130,6 +185,10 @@ fn favorites_path(catalog_path: &str) -> std::path::PathBuf {
 }
 
 pub(super) fn load_favorites(path: &str) -> Result<BTreeSet<String>, String> {
+    let catalog = Catalog::parse(&read(path, 1024 * 1024)?)?;
+    if let Some(favorites) = catalog.favorites {
+        return Ok(favorites);
+    }
     let path = favorites_path(path);
     #[cfg(not(target_arch = "wasm32"))]
     if !path.exists() {
@@ -144,21 +203,43 @@ pub(super) fn load_favorites(path: &str) -> Result<BTreeSet<String>, String> {
 }
 
 pub(super) fn save_favorites(_path: &str, _favorites: &BTreeSet<String>) -> Result<(), String> {
+    let original = read(_path, 1024 * 1024)?;
+    let mut catalog = Catalog::parse(&original)?;
+    catalog.favorites = Some(_favorites.clone());
+    catalog.version = 2;
+    save_catalog(_path, &catalog, &original).map(|_| ())
+}
+
+/// One canonical file contains properties and favorites. Old preference files remain untouched.
+pub(super) fn save_catalog(_path: &str, _catalog: &Catalog, _expected: &[u8]) -> Result<Vec<u8>, String> {
+    let bytes = serde_json::to_vec_pretty(_catalog).map_err(|e| e.to_string())?;
+    let _ = Catalog::parse(&bytes)?;
     #[cfg(not(target_arch = "wasm32"))]
     {
         use std::io::Write;
-        let path = favorites_path(_path);
+        let path = std::path::Path::new(_path);
+        if read(_path, 1024 * 1024)? != _expected {
+            return Err("Il catalogo è cambiato sul disco. Ricaricalo prima di salvare.".into());
+        }
         let stamp = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_err(|e| e.to_string())?.as_nanos();
-        let temporary = path.with_file_name(format!("preferiti-{stamp}.tmp"));
-        let bytes = serde_json::to_vec_pretty(&Favorites { version: 1, favorites: _favorites.clone() }).map_err(|e| e.to_string())?;
+        let parent = path.parent().unwrap_or(std::path::Path::new("."));
+        let backup_dir = parent.join("backups");
+        std::fs::create_dir_all(&backup_dir).map_err(|e| e.to_string())?;
+        let mut backup = std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(backup_dir.join(format!("catalogo-{stamp}.json")))
+            .map_err(|e| e.to_string())?;
+        backup.write_all(_expected).and_then(|()| backup.sync_all()).map_err(|e| e.to_string())?;
+        let temporary = path.with_file_name(format!("catalogo-{stamp}.tmp"));
         let mut file = std::fs::OpenOptions::new().write(true).create_new(true).open(&temporary).map_err(|e| e.to_string())?;
         file.write_all(&bytes).and_then(|()| file.sync_all()).map_err(|e| e.to_string())?;
         drop(file);
-        std::fs::rename(&temporary, &path).map_err(|e| format!("Salvataggio preferiti: {e}"))?;
-        Ok(())
+        std::fs::rename(&temporary, path).map_err(|e| format!("Salvataggio catalogo: {e}"))?;
+        Ok(bytes)
     }
     #[cfg(target_arch = "wasm32")]
-    Err("I preferiti locali richiedono la versione desktop.".into())
+    Err("Il catalogo locale richiede la versione desktop.".into())
 }
 
 #[cfg(test)]
@@ -185,5 +266,44 @@ mod tests {
         let c = json!({"id":"a","name":"Switch","block":"A","modules":1});
         assert!(Catalog::parse(&serde_json::to_vec(&json!({"version":1,"library":"x.dxf","components":[c,c]})).unwrap()).is_err());
         assert!(Catalog::parse(br#"{"version":1,"library":"x.dxf","components":[{"id":"a","name":"A","block":"A","modules":null}]}"#).is_err());
+    }
+
+    #[test]
+    fn legacy_defaults_and_standalone_only_entries_preserve_composer_rules() {
+        let old = config(json!([{"id":"a","name":"A","block":"A","modules":1}]));
+        assert!(old.components[0].composer && old.components[0].standalone);
+        let mut next = config(json!([{"id":"a","name":"A","block":"A","modules":0,"composer":false,"standalone":true}]));
+        assert!(next.remap(&old, &[0], 3).is_err());
+        next.components[0].composer = true;
+        assert!(Catalog::parse(&serde_json::to_vec(&next).unwrap()).is_err());
+        assert!(config(json!([])).components.is_empty());
+    }
+
+    #[test]
+    #[cfg(not(target_arch = "wasm32"))]
+    fn save_backs_up_exact_original_and_refuses_stale_writes_without_losing_unknown_fields() {
+        let stamp = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos();
+        let directory = std::env::temp_dir().join(format!("cadcraft-catalog-{stamp}"));
+        std::fs::create_dir(&directory).unwrap();
+        let path = directory.join("catalogo.json");
+        let original =
+            br#"{"version":1,"library":"x.dxf","custom":{"keep":true},"components":[{"id":"a","name":"A","block":"A","modules":1,"vendor":"keep"}]}"#;
+        std::fs::write(&path, original).unwrap();
+        let mut next = Catalog::parse(original).unwrap();
+        next.version = 2;
+        next.components[0].name = "Renamed".into();
+        next.favorites = Some(BTreeSet::from(["a".into()]));
+        let bytes = save_catalog(&path.to_string_lossy(), &next, original).unwrap();
+        assert_eq!(std::fs::read(&path).unwrap(), bytes);
+        assert_eq!(load_favorites(&path.to_string_lossy()).unwrap(), BTreeSet::from(["a".into()]));
+        let restored = Catalog::parse(&bytes).unwrap();
+        assert_eq!(restored.extra["custom"]["keep"], json!(true));
+        assert_eq!(restored.components[0].extra["vendor"], json!("keep"));
+        let backups: Vec<_> = std::fs::read_dir(directory.join("backups")).unwrap().map(|e| e.unwrap().path()).collect();
+        assert_eq!(backups.len(), 1);
+        assert_eq!(std::fs::read(&backups[0]).unwrap(), original);
+        assert!(save_catalog(&path.to_string_lossy(), &next, original).is_err());
+        assert_eq!(std::fs::read(&path).unwrap(), bytes);
+        std::fs::remove_dir_all(&directory).unwrap();
     }
 }
