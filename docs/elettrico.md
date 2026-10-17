@@ -45,11 +45,59 @@ Engine commands: `electrical.prepare`, interactive `electrical.place`, `electric
 and dialog-free `electrical.insert`. The latter accepts the external library, composition,
 point, rotation, side and optional backup directory. Preparation never changes the document.
 
-The local launcher supplies the external DXF path through `CADCRAFT_ELECTRICAL_LIBRARY`.
-Settings also offers a DXF picker. The explicit UI command `ui.elettrico.library {path}`
-loads a library without changing any open drawing. Reads are bounded to 16 MB, and the
-nine symbol display lists are cached until a different library is selected. Source artwork
-stays outside this repository.
+The local launcher supplies the external JSON path through `CADCRAFT_ELECTRICAL_CATALOG`.
+`ui.elettrico.catalog {path}` loads or reloads it without changing a drawing. A call with no
+path reloads the current file (or the environment path after an initial load error). Settings
+offers `Ricarica catalogo e simboli` and a DXF override picker through `ui.elettrico.library`.
+DXF reads are bounded to 16 MB; previews are cached until a reload. Source artwork and the
+user's actual metadata stay outside this repository.
+
+## External catalog and favorites
+
+The catalog is UTF-8 JSON (optional BOM), limited to 1 MB and 512 enabled box components:
+
+```json
+{
+  "version": 1,
+  "library": "symbols.dxf",
+  "defaults": {"scale": 50, "size_percent": 100, "units": "mm"},
+  "components": [
+    {"id": "switch", "name": "Switch", "block": "MySwitch",
+     "modules": 1, "category": ["Controls", "Switches"]}
+  ]
+}
+```
+
+`library` resolves relative to the JSON file. `modules` is occupied slots (1–6); unknown
+occupancy must be reviewed before adding a symbol to the enabled catalog. `category` is
+an optional path of up to four names, creating nested expandable menus. Names, graphics,
+slot occupancy, categories, default scale, default percentage and default units can change
+without rebuilding or restarting CADCraft: edit the external files and reload in Settings.
+Drawing dimensions remain the paper dimensions documented above; occupied slots are the
+configurable component footprint. Temporary drawing settings are preserved on a name-only
+reload; changed default fields are applied individually.
+
+IDs are unique and stable: keep them when renaming or moving a component. Reload remaps
+the current composition by ID, so reordering cannot substitute devices. Removing a selected
+component or increasing occupancy beyond capacity rejects the reload and retains the old
+catalog and composition. Invalid JSON, failed DXF reads and invalid preferences also retain
+the previous configuration. End an active drafting command before reloading.
+
+Stars toggle favorites, saved atomically in `preferiti.json` beside the catalog:
+`{"version":1,"favorites":["switch"]}`. The favorites list is independent of category paths
+and names; IDs absent from the current catalog remain stored for later catalogs. Search
+matches component names or source block names. No reload changes previously placed boxes.
+
+The user's recovered-symbol index is a separate external archive. It is not automatically
+enabled as box components: categories, suitability and occupancy require human review.
+Full archive browsing and standalone-symbol insertion are later features.
+
+## Fast iteration
+
+Use the development executable in `target/debug/cadcraft.exe` for interface review. The
+local trial build uses `cargo build --workspace --bins`, sharing the workspace feature set
+and dependency cache with CI. Optimized release builds are reserved for finalized groups
+of changes. The full CI gate still runs before committing a completed feature.
 
 ## Next implementation stages
 

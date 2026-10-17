@@ -4,19 +4,19 @@ use serde_json::{Value, json};
 
 use crate::{CadApp, theme::Tokens};
 
+mod catalog;
 mod preview;
 
-const COMPONENTS: &[(&str, u8, &str)] = &[
-    ("Interruttore", 1, "B03_02_InterruttoreUnipolare"),
-    ("Deviatore", 1, "B03_08_Deviatore"),
-    ("Invertitore", 1, "Invertitore"),
-    ("Pulsante", 1, "B03_16_Pulsante"),
-    ("Presa 10 A", 1, "Presa2P+T_10"),
-    ("Presa UNEL / Schuko", 2, "B05_16_PresaSchuko"),
-    ("Presa TV / SAT", 1, "PresaTVSAT"),
-    ("Presa rete RJ45", 1, "PresaRJ45"),
-    ("Copriforo", 1, "Copriforo 1 modulo"),
-];
+fn catalog_environment() -> Option<String> {
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        std::env::var("CADCRAFT_ELECTRICAL_CATALOG").ok()
+    }
+    #[cfg(target_arch = "wasm32")]
+    {
+        None
+    }
+}
 
 pub struct State {
     pub open: bool,
@@ -30,6 +30,10 @@ pub struct State {
     library_error: Option<String>,
     library_attempted: bool,
     model_meters: bool,
+    catalog: catalog::Catalog,
+    catalog_path: Option<String>,
+    favorites: std::collections::BTreeSet<String>,
+    search: String,
 }
 
 impl Default for State {
@@ -46,17 +50,66 @@ impl Default for State {
             library_error: None,
             library_attempted: false,
             model_meters: false,
+            catalog: catalog::Catalog::default(),
+            catalog_path: None,
+            favorites: Default::default(),
+            search: String::new(),
         }
     }
 }
 
 impl State {
     fn used(&self) -> u8 {
-        self.items.iter().filter_map(|i| COMPONENTS.get(*i)).map(|c| c.1).sum()
+        self.items.iter().filter_map(|i| self.catalog.components.get(*i)).map(|c| c.modules).sum()
     }
 }
 
 pub fn route(app: &mut CadApp, id: &str, params: &Value) -> Option<Result<Value, String>> {
+    if id == "ui.elettrico.catalog" {
+        let result = (|| {
+            if app.session.running.is_some() {
+                return Err("Termina il comando corrente prima di ricaricare il catalogo.".to_string());
+            }
+            let path = params
+                .get("path")
+                .and_then(Value::as_str)
+                .map(str::to_string)
+                .or_else(|| app.elettrico.catalog_path.clone())
+                .or_else(catalog_environment)
+                .ok_or("Indica il percorso del catalogo JSON.".to_string())?;
+            if path.len() > 32768 {
+                return Err("Percorso catalogo troppo lungo.".to_string());
+            }
+            let catalog = catalog::Catalog::parse(&catalog::read(&path, 1024 * 1024)?)?;
+            let selected = catalog.remap(&app.elettrico.catalog, &app.elettrico.items, app.elettrico.capacity)?;
+            let favorites = catalog::load_favorites(&path)?;
+            let library_path = std::path::Path::new(&path).parent().unwrap_or(std::path::Path::new(".")).join(&catalog.library);
+            let library = preview::Library::load(&library_path.to_string_lossy(), &catalog.components)?;
+            let count = catalog.components.len();
+            let first = app.elettrico.catalog_path.as_deref() != Some(path.as_str());
+            if first || catalog.defaults.scale != app.elettrico.catalog.defaults.scale {
+                app.elettrico.scale = catalog.defaults.scale;
+            }
+            if first || catalog.defaults.size_percent != app.elettrico.catalog.defaults.size_percent {
+                app.elettrico.size_percent = catalog.defaults.size_percent;
+            }
+            if first || catalog.defaults.units != app.elettrico.catalog.defaults.units {
+                app.elettrico.model_meters = catalog.defaults.units == "m";
+            }
+            app.elettrico.catalog = catalog;
+            app.elettrico.items = selected;
+            app.elettrico.favorites = favorites;
+            app.elettrico.catalog_path = Some(path);
+            app.elettrico.library = Some(library);
+            app.elettrico.library_error = None;
+            app.elettrico.library_attempted = true;
+            Ok(json!({"components":count}))
+        })();
+        if let Err(e) = &result {
+            app.elettrico.library_error = Some(e.clone());
+        }
+        return Some(result);
+    }
     if id == "ui.elettrico.library" {
         let path = if params.is_null() {
             app.services.pick_open.as_ref().and_then(|pick| pick())
@@ -67,7 +120,7 @@ pub fn route(app: &mut CadApp, id: &str, params: &Value) -> Option<Result<Value,
             return Some(if params.is_null() { Ok(Value::Null) } else { Err("Indica il percorso della libreria DXF.".into()) });
         };
         app.elettrico.library_attempted = true;
-        return Some(match preview::Library::load(&path) {
+        return Some(match preview::Library::load(&path, &app.elettrico.catalog.components) {
             Ok(library) => {
                 let count = library.available();
                 app.elettrico.library = Some(library);
@@ -93,13 +146,17 @@ pub fn show(app: &mut CadApp, ctx: &egui::Context) {
     placement_window(app, ctx);
     if app.elettrico.open && !app.elettrico.library_attempted {
         app.elettrico.library_attempted = true;
-        #[cfg(not(target_arch = "wasm32"))]
-        if let Ok(path) = std::env::var("CADCRAFT_ELECTRICAL_LIBRARY") {
-            let _ = route(app, "ui.elettrico.library", &json!({"path": path}));
+        if let Some(path) = catalog_environment() {
+            let _ = route(app, "ui.elettrico.catalog", &json!({"path": path}));
+        } else {
+            app.elettrico.library_error =
+                Some("Carica un catalogo JSON con ui.elettrico.catalog oppure avvia CADCraft Elettrico dal suo collegamento.".into());
         }
     }
     let mut choose_library = false;
     let mut insert = false;
+    let mut reload = false;
+    let mut favorites_changed = false;
     let state = &mut app.elettrico;
     let mut open = state.open;
     let t = Tokens::get();
@@ -130,11 +187,28 @@ pub fn show(app: &mut CadApp, ctx: &egui::Context) {
             ui.columns(2, |columns| {
                 if let Some(ui) = columns.get_mut(0) {
                     ui.heading("Componenti");
-                    for (i, (name, modules, _)) in COMPONENTS.iter().enumerate() {
-                        if ui.add_enabled(state.used() + modules <= state.capacity, egui::Button::new(format!("+ {name} · {modules} p"))).clicked() {
-                            state.items.push(i);
-                        }
-                    }
+                    ui.add(egui::TextEdit::singleline(&mut state.search).hint_text("Cerca nome o simbolo..."));
+                    egui::ScrollArea::vertical().max_height(290.0).show(ui, |ui| {
+                        ui.push_id("favorites", |ui| {
+                            egui::CollapsingHeader::new("Preferiti").default_open(true).show(ui, |ui| {
+                                let indices: Vec<_> = state
+                                    .catalog
+                                    .components
+                                    .iter()
+                                    .enumerate()
+                                    .filter(|(_, c)| state.favorites.contains(&c.id) && matches_search(c, &state.search))
+                                    .map(|(i, _)| i)
+                                    .collect();
+                                if indices.is_empty() {
+                                    ui.label("Usa la stella per aggiungere un preferito.");
+                                }
+                                for i in indices {
+                                    favorites_changed |= component_row(ui, state, i);
+                                }
+                            });
+                        });
+                        favorites_changed |= category_tree(ui, state, &[]);
+                    });
                 }
                 if let Some(ui) = columns.get_mut(1) {
                     ui.heading("Anteprima CAD");
@@ -148,9 +222,9 @@ pub fn show(app: &mut CadApp, ctx: &egui::Context) {
                     ui.label(format!("{} / {} posti occupati", state.used(), state.capacity));
                     let mut remove = None;
                     for (position, index) in state.items.iter().enumerate() {
-                        if let Some((name, modules, _)) = COMPONENTS.get(*index) {
+                        if let Some(component) = state.catalog.components.get(*index) {
                             ui.horizontal(|ui| {
-                                ui.label(format!("{name} · {modules} p"));
+                                ui.label(format!("{} · {} p", component.name, component.modules));
                                 if ui.small_button("Rimuovi").clicked() {
                                     remove = Some(position);
                                 }
@@ -167,9 +241,9 @@ pub fn show(app: &mut CadApp, ctx: &egui::Context) {
                     ui.label("Schema dei posti");
                     ui.horizontal(|ui| {
                         for index in &state.items {
-                            if let Some((_, modules, _)) = COMPONENTS.get(*index) {
+                            if let Some(component) = state.catalog.components.get(*index) {
                                 ui.group(|ui| {
-                                    ui.label(format!("{modules} p"));
+                                    ui.label(format!("{} p", component.modules));
                                 });
                             }
                         }
@@ -188,6 +262,12 @@ pub fn show(app: &mut CadApp, ctx: &egui::Context) {
     state.open = open;
     egui::Window::new("Impostazioni — Elettrico").open(&mut state.settings_open).show(ctx, |ui| {
         ui.heading("Libreria simboli");
+        if let Some(path) = &state.catalog_path {
+            ui.label(format!("{} componenti nel catalogo esterno", state.catalog.components.len()));
+            ui.label(path);
+            ui.label("Nomi, posti, categorie, simboli e valori iniziali si modificano nel JSON. Le stelle sono salvate in preferiti.json.");
+        }
+        reload = ui.button("Ricarica catalogo e simboli").clicked();
         if let Some(library) = &state.library {
             ui.label(format!("{} · {} simboli disponibili", library.name, library.available()));
         } else {
@@ -216,6 +296,15 @@ pub fn show(app: &mut CadApp, ctx: &egui::Context) {
     if choose_library {
         let _ = route(app, "ui.elettrico.library", &Value::Null);
     }
+    if favorites_changed
+        && let Some(path) = &app.elettrico.catalog_path
+        && let Err(e) = catalog::save_favorites(path, &app.elettrico.favorites)
+    {
+        app.elettrico.library_error = Some(e);
+    }
+    if reload {
+        let _ = route(app, "ui.elettrico.catalog", &Value::Null);
+    }
     if insert {
         let result = (|| {
             let state = &app.elettrico;
@@ -233,8 +322,8 @@ pub fn show(app: &mut CadApp, ctx: &egui::Context) {
             let items: Vec<_> = state
                 .items
                 .iter()
-                .filter_map(|i| COMPONENTS.get(*i))
-                .map(|(name, modules, block)| json!({"name":name,"modules":modules,"block":block}))
+                .filter_map(|i| state.catalog.components.get(*i))
+                .map(|c| json!({"name":c.name,"modules":c.modules,"block":c.block}))
                 .collect();
             let factor = f64::from(state.scale) * f64::from(state.size_percent) / 100.0 / if state.model_meters { 1000.0 } else { 1.0 };
             let params = json!({"library":library.source_path,"composition":{"capacity":state.capacity,"items":items,"factor":factor,"installation_height_cm":height}});
@@ -250,6 +339,67 @@ pub fn show(app: &mut CadApp, ctx: &egui::Context) {
             Err(e) => app.elettrico.library_error = Some(e),
         }
     }
+}
+
+fn matches_search(c: &catalog::Component, search: &str) -> bool {
+    let search = search.trim().to_lowercase();
+    search.is_empty() || c.name.to_lowercase().contains(&search) || c.block.to_lowercase().contains(&search)
+}
+
+fn component_row(ui: &mut egui::Ui, state: &mut State, index: usize) -> bool {
+    let Some(c) = state.catalog.components.get(index).cloned() else { return false };
+    let mut changed = false;
+    ui.push_id(index, |ui| {
+        ui.horizontal(|ui| {
+            let favorite = state.favorites.contains(&c.id);
+            if ui.small_button(if favorite { "★" } else { "☆" }).on_hover_text("Aggiungi o rimuovi dai preferiti").clicked() {
+                if favorite {
+                    state.favorites.remove(&c.id);
+                } else {
+                    state.favorites.insert(c.id.clone());
+                }
+                changed = true;
+            }
+            if ui.add_enabled(state.used() + c.modules <= state.capacity, egui::Button::new(format!("+ {} · {} p", c.name, c.modules))).clicked() {
+                state.items.push(index);
+            }
+        });
+    });
+    changed
+}
+
+fn category_tree(ui: &mut egui::Ui, state: &mut State, prefix: &[String]) -> bool {
+    if prefix.len() > 4 {
+        return false;
+    }
+    let mut changed = false;
+    let rows: Vec<_> = state
+        .catalog
+        .components
+        .iter()
+        .enumerate()
+        .filter(|(_, c)| c.category == prefix && matches_search(c, &state.search))
+        .map(|(i, _)| i)
+        .collect();
+    for i in rows {
+        changed |= component_row(ui, state, i);
+    }
+    let children: std::collections::BTreeSet<_> = state
+        .catalog
+        .components
+        .iter()
+        .filter(|c| c.category.starts_with(prefix) && matches_search(c, &state.search))
+        .filter_map(|c| c.category.get(prefix.len()))
+        .cloned()
+        .collect();
+    for child in children {
+        let mut path = prefix.to_vec();
+        path.push(child.clone());
+        egui::CollapsingHeader::new(child).id_salt(&path).default_open(true).show(ui, |ui| {
+            changed |= category_tree(ui, state, &path);
+        });
+    }
+    changed
 }
 
 fn placement_window(app: &mut CadApp, ctx: &egui::Context) {
@@ -331,9 +481,15 @@ mod tests {
 
     #[test]
     fn unel_uses_two_slots_and_empty_slots_stay_available() {
-        let state = State { capacity: 6, items: vec![5, 5, 5], ..State::default() };
+        let config = || {
+            catalog::Catalog::parse(
+                br#"{"version":1,"library":"synthetic.dxf","components":[{"id":"unel","name":"Socket","block":"Socket","modules":2}]}"#,
+            )
+            .unwrap()
+        };
+        let state = State { capacity: 6, items: vec![0, 0, 0], catalog: config(), ..State::default() };
         assert_eq!(state.used(), 6);
-        let state = State { capacity: 3, items: vec![5], ..State::default() };
+        let state = State { capacity: 3, items: vec![0], catalog: config(), ..State::default() };
         assert_eq!(state.capacity - state.used(), 1);
     }
 

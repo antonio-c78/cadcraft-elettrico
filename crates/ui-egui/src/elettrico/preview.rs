@@ -10,7 +10,7 @@ use egui::{Color32, Rect, Stroke, pos2, vec2};
 
 use crate::canvas::Xf;
 
-use super::{COMPONENTS, State};
+use super::{State, catalog::Component};
 
 #[cfg(not(target_arch = "wasm32"))]
 const MAX_LIBRARY_BYTES: u64 = 16 * 1024 * 1024;
@@ -26,24 +26,24 @@ impl Library {
         self.symbols.iter().filter(|symbol| symbol.is_some()).count()
     }
 
-    pub fn load(path: &str) -> Result<Self, String> {
+    pub fn load(path: &str, components: &[Component]) -> Result<Self, String> {
         let bytes = read_library(path)?;
         let hooks = cadcraft_engine::cmd::file::io().ok_or("Lettore DXF non disponibile.")?;
         let drawing = (hooks.read)(&bytes, path)?;
         let name = std::path::Path::new(path).file_name().map(|name| name.to_string_lossy().into_owned()).unwrap_or_default();
-        let mut library = Self::from_drawing(&drawing, name);
+        let mut library = Self::from_drawing(&drawing, name, components);
         library.source_path = path.to_string();
         if library.available() == 0 {
-            return Err("La libreria non contiene i simboli del compositore. Scegli simboli-generali.dxf.".into());
+            return Err("Nessun simbolo del catalogo trovato: verifica i nomi dei blocchi e la libreria DXF scelta.".into());
         }
         Ok(library)
     }
 
-    fn from_drawing(drawing: &Drawing, name: String) -> Self {
-        let symbols = COMPONENTS
+    fn from_drawing(drawing: &Drawing, name: String, components: &[Component]) -> Self {
+        let symbols = components
             .iter()
-            .map(|(_, _, name)| {
-                let block = drawing.block(name)?;
+            .map(|component| {
+                let block = drawing.block(&component.block)?;
                 let rough = cadcraft_render::build_entities(drawing, block.entities.iter().map(|entity| entity.as_ref()), &Default::default());
                 let size = rough.bounds.width().max(rough.bounds.height());
                 if rough.bounds.is_empty() || !size.is_finite() || !rough.bounds.center().is_finite() || rough.prims.is_empty() {
@@ -125,8 +125,8 @@ pub(super) fn show(ui: &mut egui::Ui, state: &State) {
     }
     let mut position = 0.0;
     for index in &state.items {
-        let Some((_, modules, _)) = COMPONENTS.get(*index) else { continue };
-        let span = f32::from(*modules) * 3.0 * unit;
+        let Some(component) = state.catalog.components.get(*index) else { continue };
+        let span = f32::from(component.modules) * 3.0 * unit;
         let slot = Rect::from_min_size(pos2(box_rect.left() + position, box_rect.top()), vec2(span, box_rect.height()));
         if position > 0.0 {
             painter.line_segment([slot.left_top(), slot.left_bottom()], stroke);
@@ -158,9 +158,10 @@ mod tests {
     fn external_block_geometry_is_cached_without_touching_the_active_drawing() {
         let mut session = cadcraft_engine::Session::new();
         let line = session.execute("line", &json!({"points": [[100, 200], [140, 220]]})).unwrap();
-        session.execute("block", &json!({"name": COMPONENTS[0].2, "base": [0, 0], "handles": line["handles"]})).unwrap();
+        session.execute("block", &json!({"name": "SyntheticSwitch", "base": [0, 0], "handles": line["handles"]})).unwrap();
         let before = session.doc().unwrap().clone();
-        let library = Library::from_drawing(&before, "synthetic".into());
+        let component = Component { id: "switch".into(), name: "Switch".into(), block: "SyntheticSwitch".into(), modules: 1, category: vec![] };
+        let library = Library::from_drawing(&before, "synthetic".into(), &[component]);
         assert_eq!(library.available(), 1);
         assert_eq!(session.doc().unwrap().model.len(), before.model.len());
         let symbol = library.symbols[0].as_ref().unwrap();
