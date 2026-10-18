@@ -280,7 +280,10 @@ new `EL_AMBIENTI` layer is green and nonplotting by default; existing layer sett
 are preserved. The layer can be hidden or enabled for plotting through CADCraft.
 
 Gestione ambienti lists room names, floors and the count of native electrical
-objects (a composed box counts as one object). Modify renames the room or redraws
+objects (a composed box counts as one object). Selecting a single room in the CAD
+also selects its manager row and enables editing. A row chosen in the manager
+stays selected while components are selected for manual assignment; an unchanged
+CAD selection does not override that choice. Modify renames the room or redraws
 its perimeter, preserving its reference handle and manual assignments. Copies get
 their own handles; changing one reference never edits a shared definition. A label
 is positioned inside a concave perimeter. Boundaries are limited to 3–512 vertices;

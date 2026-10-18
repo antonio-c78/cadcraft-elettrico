@@ -1,5 +1,6 @@
 //! Guided room boundaries and a small manager; all drawing changes use engine commands.
 use crate::CadApp;
+use cadcraft_engine::doc::Handle;
 use serde_json::{Value, json};
 
 #[derive(Default)]
@@ -14,7 +15,28 @@ pub(super) struct State {
     rows: Vec<Value>,
     assignments: Vec<Value>,
     selected: Option<String>,
+    cad_selection: Option<Vec<Handle>>,
     document: Option<(u64, u64)>,
+}
+
+impl State {
+    fn sync_selection(&mut self, selection: Vec<Handle>) {
+        if self.cad_selection.as_ref() == Some(&selection) {
+            return;
+        }
+        let mut rooms = self.rows.iter().filter_map(|row| {
+            let text = row["handle"].as_str()?;
+            let handle = Handle::parse_hex(text)?;
+            selection.contains(&handle).then_some(text)
+        });
+        if let Some(room) = rooms.next()
+            && rooms.next().is_none()
+        {
+            self.selected = Some(room.into());
+        }
+        // Keep the destination room when selecting components for manual assignment.
+        self.cad_selection = Some(selection);
+    }
 }
 
 fn refresh(app: &mut CadApp) -> Result<(), String> {
@@ -22,11 +44,15 @@ fn refresh(app: &mut CadApp) -> Result<(), String> {
     let identity = (current.uid, current.revision);
     if app.elettrico.rooms.document.is_none_or(|old| old.0 != identity.0) {
         app.elettrico.rooms.selected = None;
+        app.elettrico.rooms.cad_selection = None;
     }
     app.elettrico.rooms.document = Some(identity);
     app.elettrico.rooms.assignments.clear();
     let rooms = app.run("electrical.room.list", json!({}))?;
     app.elettrico.rooms.rows = rooms["rooms"].as_array().cloned().unwrap_or_default();
+    if !app.elettrico.rooms.rows.iter().any(|row| row["handle"].as_str() == app.elettrico.rooms.selected.as_deref()) {
+        app.elettrico.rooms.selected = None;
+    }
     let scan = app.run("electrical.room.scan", json!({}))?;
     app.elettrico.rooms.assignments = scan["components"].as_array().cloned().unwrap_or_default();
     Ok(())
@@ -53,6 +79,7 @@ pub(super) fn command(app: &mut CadApp, id: &str) -> Result<Value, String> {
         start(app, None)?;
     } else {
         refresh(app)?;
+        app.elettrico.rooms.cad_selection = None;
         app.elettrico.rooms.open = true;
         app.elettrico.open = false;
         app.elettrico.symbol.open = false;
@@ -163,6 +190,7 @@ pub(super) fn show(app: &mut CadApp, ctx: &egui::Context) {
         app.elettrico.rooms.error = Some(e);
     }
     let mut state = std::mem::take(&mut app.elettrico.rooms);
+    state.sync_selection(app.session.selection());
     let mut open = true;
     let mut action = None;
     let mut pick = None;
@@ -266,5 +294,33 @@ pub(super) fn show(app: &mut CadApp, ctx: &egui::Context) {
             refresh(app)
         })();
         app.elettrico.rooms.error = result.err();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn cad_room_selection_respects_list_choice_and_component_assignment() {
+        let first = Handle::parse_hex("102").expect("test handle");
+        let second = Handle::parse_hex("105").expect("test handle");
+        let component = Handle::parse_hex("12E").expect("test handle");
+        let mut state = State { rows: vec![json!({"handle":"102"}), json!({"handle":"105"})], ..State::default() };
+        state.sync_selection(vec![first]);
+        assert_eq!(state.selected.as_deref(), Some("102"));
+        state.selected = Some("105".into());
+        state.sync_selection(vec![first]);
+        assert_eq!(state.selected.as_deref(), Some("105"));
+        state.sync_selection(vec![component]);
+        assert_eq!(state.selected.as_deref(), Some("105"));
+        state.sync_selection(vec![first, second]);
+        assert_eq!(state.selected.as_deref(), Some("105"));
+        state.sync_selection(vec![first]);
+        assert_eq!(state.selected.as_deref(), Some("102"));
+        state.selected = None;
+        state.cad_selection = None;
+        state.sync_selection(vec![first]);
+        assert_eq!(state.selected.as_deref(), Some("102"));
     }
 }
