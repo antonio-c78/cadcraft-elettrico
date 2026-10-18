@@ -15,6 +15,8 @@ pub struct Symbol {
 
 pub(super) fn specs() -> Vec<CommandSpec> {
     vec![
+        CommandSpec::new("electrical.symbol.read", "Read electrical symbol", super::edit::read_symbol).noundo(),
+        CommandSpec::new("electrical.symbol.update", "Update electrical symbol", super::edit::update_symbol),
         CommandSpec::new("electrical.symbol.place", "Insert electrical symbol", |_, _| {
             Err(bad("electrical.symbol.place", "Prepara un simbolo, poi avvia il comando interattivo."))
         })
@@ -37,7 +39,7 @@ fn ready(s: &Session) -> bool {
     s.electrical.as_ref().is_some_and(|p| p.is_symbol() && p.phase == 0 && s.state().is_ok_and(|st| st.uid == p.uid))
 }
 
-fn prepare(s: &mut Session, p: &Value) -> Result<Value> {
+pub(super) fn prepare(s: &mut Session, p: &Value) -> Result<Value> {
     if s.running.is_some() || s.space() != Space::Model {
         return Err(bad("electrical.symbol.prepare", "Termina il comando e passa allo spazio modello."));
     }

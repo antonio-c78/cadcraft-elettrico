@@ -106,6 +106,7 @@ pub fn entries(app: &CadApp) -> Vec<Vec<Entry>> {
     push(&mut groups, clip);
     let selected = !app.session.selection().is_empty();
     if selected {
+        push(&mut groups, crate::elettrico::context::entries(app));
         let mut edit: Vec<Entry> = EDIT.iter().filter_map(|(id, label)| item(app, id, *label)).collect();
         edit.extend(sub("Draw Order", items(app, DRAW_ORDER)));
         edit.extend(items(app, GROUP));

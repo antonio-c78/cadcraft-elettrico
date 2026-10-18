@@ -289,6 +289,34 @@ their own handles; changing one reference never edits a shared definition. A lab
 is positioned inside a concave perimeter. Boundaries are limited to 3–512 vertices;
 zero-length sides, retracing, self-intersections and self-touches are rejected.
 
+### Selection context menu
+
+The canvas right-click menu retains its standard CAD actions and adds an
+**Elettrico** submenu for native electrical objects in model space. A single
+composed box opens the existing composer, with direct shortcuts to height and
+height-label position. A single standalone symbol opens the same symbol gallery
+for replacement or a small height/label editor. Replacing a symbol preserves its
+reference handle, actual factor, insertion point, rotation, height, layer mapping
+and room assignment, and never changes other references sharing its old block.
+Symbol updates use the same backup-before-mutation and one-step undo transaction
+as composed boxes (`electrical.symbol.read`, `electrical.symbol.update`).
+
+For boxes and standalone symbols, **Ambiente di appartenenza...** reports the room,
+floor and manual/automatic/unresolved status. The dialog can assign/change the
+room, highlight its reference, or open its existing editor. Selected electrical
+components can also be reassigned together or reset to automatic assignment.
+Dialogs retain their original target handles and document identity/revision, so
+changing the CAD selection never redirects an operation to different objects;
+document changes require reopening the dialog.
+
+A room's context menu offers the existing editor, perimeter redraw, selection of
+its assigned components and confirmed deletion. Mixed selections containing ordinary
+CAD objects or rooms and components do not expose incompatible electrical actions;
+multi-component selections expose only shared assignment actions. MOVE and ROTATE
+remain in the standard CAD menu. Future electrical types should extend this
+selection-based command routing and reuse existing editors rather than introduce
+parallel editing workflows. No symbol artwork is embedded in the application.
+
 Room identity is the native model-space reference handle, persisted by DXF; room
 metadata uses XDATA `CC_AMBIENTE` version 1. Rooms can be moved/copied normally;
 reads use the actual transformed perimeter. Nonuniform or mirrored scaling is

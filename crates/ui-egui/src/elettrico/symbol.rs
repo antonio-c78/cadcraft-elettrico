@@ -14,6 +14,15 @@ pub(super) struct State {
     pub height: String,
     placing: bool,
     error: Option<String>,
+    editing: Option<Value>,
+}
+
+pub(super) fn edit(app: &mut CadApp, params: &Value) -> Result<Value, String> {
+    let snapshot = app.run("electrical.symbol.read", params.clone())?;
+    command(app, "ui.elettrico.symbols", &json!({}))?;
+    app.elettrico.symbol.settings_open = false;
+    app.elettrico.symbol.editing = Some(snapshot);
+    Ok(json!({"open":true}))
 }
 
 pub(super) fn parse_height(text: &str) -> Result<Option<f64>, String> {
@@ -53,6 +62,7 @@ pub(super) fn command(app: &mut CadApp, id: &str, p: &Value) -> Result<Value, St
             let s = &app.elettrico.symbol;
             return Ok(json!({"open":s.open,"scale":s.scale,"size_percent":s.percent,"units":if s.meters{"m"}else{"mm"}}));
         }
+        app.elettrico.symbol.editing = None;
         if let Some(settings) = p.get("settings") {
             let scale = settings.get("scale").and_then(Value::as_u64).filter(|n| (1..=1000).contains(n)).ok_or("Scala non valida.")?;
             let percent = settings
@@ -82,7 +92,17 @@ pub(super) fn command(app: &mut CadApp, id: &str, p: &Value) -> Result<Value, St
     let source = app.elettrico.library.as_ref().ok_or("Carica il catalogo.")?.source_path.clone();
     let state = &app.elettrico.symbol;
     let factor = f64::from(state.scale) * f64::from(state.percent) / 100.0 / if state.meters { 1000.0 } else { 1.0 };
-    let params = json!({"library":source,"layers":app.elettrico.catalog.extra.get("layers"),"symbol":{"id":c.id,"name":c.name,"block":c.block,"category":c.category,"factor":factor,"width_mm":c.width_mm,"height_mm":c.height_mm,"anchor":c.anchor}});
+    let mut params = json!({"library":source,"layers":app.elettrico.catalog.extra.get("layers"),"symbol":{"id":c.id,"name":c.name,"block":c.block,"category":c.category,"factor":factor,"width_mm":c.width_mm,"height_mm":c.height_mm,"anchor":c.anchor}});
+    if let Some(mut saved) = app.elettrico.symbol.editing.clone() {
+        // Preserve the existing object's actual size, location, orientation and room identity.
+        params["symbol"]["factor"] = saved["symbol"]["factor"].clone();
+        saved["symbol"] = params["symbol"].clone();
+        saved["library"] = params["library"].clone();
+        app.run("electrical.symbol.update", saved)?;
+        app.elettrico.symbol.open = false;
+        app.elettrico.symbol.editing = None;
+        return Ok(json!({"updated":true}));
+    }
     app.run("electrical.symbol.prepare", params)?;
     app.elettrico.symbol.open = false;
     app.elettrico.symbol.error = None;
@@ -106,7 +126,7 @@ pub(super) fn show(app: &mut CadApp, ctx: &egui::Context) {
     let mut open = state.open;
     let mut choose = None;
     let mut reset = false;
-    egui::Window::new("Inserisci simbolo — Elettrico")
+    egui::Window::new(if state.editing.is_some() { "Sostituisci simbolo — Elettrico" } else { "Inserisci simbolo — Elettrico" })
         .id(egui::Id::new("electrical.symbol.gallery"))
         .open(&mut open)
         .default_width(1080.0)
@@ -115,12 +135,20 @@ pub(super) fn show(app: &mut CadApp, ctx: &egui::Context) {
         .max_height(740.0)
         .vscroll(true)
         .show(ctx, |ui| {
-            ui.horizontal(|ui| {
-                if ui.button("Impostazioni").clicked() {
-                    state.settings_open = true;
-                }
-                ui.label(format!("Scala 1:{} · dimensione {}% · {}", state.scale, state.percent, if state.meters { "m" } else { "mm" }));
-            });
+            if let Some(saved) = &state.editing {
+                ui.label(format!(
+                    "Simbolo attuale: {}. Scegli il nuovo simbolo; posizione, dimensione e altezza vengono mantenute.",
+                    saved["symbol"]["name"].as_str().unwrap_or("")
+                ));
+            }
+            if state.editing.is_none() {
+                ui.horizontal(|ui| {
+                    if ui.button("Impostazioni").clicked() {
+                        state.settings_open = true;
+                    }
+                    ui.label(format!("Scala 1:{} · dimensione {}% · {}", state.scale, state.percent, if state.meters { "m" } else { "mm" }));
+                });
+            }
             ui.separator();
             choose = manager::browser(ui, &mut state.browser, &app.elettrico);
             if let Some(e) = &state.error {
@@ -145,6 +173,9 @@ pub(super) fn show(app: &mut CadApp, ctx: &egui::Context) {
         reset = ui.button("Usa impostazioni del compositore").clicked();
     });
     state.open = open;
+    if !open {
+        state.editing = None;
+    }
     app.elettrico.symbol = state;
     if reset {
         inherit(app);

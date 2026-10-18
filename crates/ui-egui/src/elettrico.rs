@@ -5,6 +5,7 @@ use serde_json::{Value, json};
 use crate::{CadApp, theme::Tokens};
 
 mod catalog;
+pub(crate) mod context;
 mod edit;
 mod manager;
 mod preview;
@@ -43,6 +44,7 @@ pub struct State {
     manager: manager::State,
     symbol: symbol::State,
     rooms: rooms::State,
+    context: context::State,
 }
 
 impl Default for State {
@@ -68,6 +70,7 @@ impl Default for State {
             manager: manager::State::default(),
             symbol: symbol::State::default(),
             rooms: rooms::State::default(),
+            context: context::State::default(),
         }
     }
 }
@@ -101,6 +104,9 @@ impl State {
 }
 
 pub fn route(app: &mut CadApp, id: &str, params: &Value) -> Option<Result<Value, String>> {
+    if id.starts_with("ui.elettrico.context.") {
+        return Some(context::command(app, id));
+    }
     if matches!(id, "ui.elettrico.room" | "ui.elettrico.rooms") {
         return Some(rooms::command(app, id));
     }
@@ -201,6 +207,7 @@ pub fn route(app: &mut CadApp, id: &str, params: &Value) -> Option<Result<Value,
 }
 
 pub fn show(app: &mut CadApp, ctx: &egui::Context) {
+    context::show(app, ctx);
     rooms::show(app, ctx);
     edit::poll(app, ctx);
     placement_window(app, ctx);

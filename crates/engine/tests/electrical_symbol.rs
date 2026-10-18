@@ -106,3 +106,103 @@ fn symbol_placement_is_provisional_guided_backed_up_atomic_and_roundtrips() {
     assert!(s.execute("electrical.symbol.prepare", &custom).is_err());
     std::fs::remove_dir_all(root).unwrap();
 }
+
+#[test]
+fn symbol_edits_preserve_reference_copies_assignment_and_are_atomic() {
+    use cadcraft_engine::doc::{RawTag, Space};
+    set_io(IoHooks {
+        read: |b, n| cadcraft_io::read(b, n).map_err(|e| e.to_string()),
+        write: |d, n| cadcraft_io::write(d, n).map_err(|e| e.to_string()),
+        plot: None,
+    });
+    let root = std::env::temp_dir()
+        .join(format!("cadcraft-symbol-edit-{}", std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()));
+    std::fs::create_dir(&root).unwrap();
+    let library_path = root.join("library.dxf");
+    let mut library = Drawing::new_metric();
+    for (name, end) in [("First", Vec3::new(3.0, 4.0, 0.0)), ("Second", Vec3::new(4.0, 1.0, 0.0))] {
+        let mut block = Block::new(name);
+        block.entities.push(Entity::new(Handle(100), EntityKind::Line(Line { a: Vec3::ZERO, b: end })));
+        library.blocks.insert(name.into(), Arc::new(block));
+    }
+    std::fs::write(&library_path, cadcraft_io::write(&library, "library.dxf").unwrap()).unwrap();
+    let mut s = Session::new();
+    let request = json!({"library":library_path,"backup_dir":root,"at":[25,35],"rotation":90,"height_cm":100,"side":2,
+        "symbol":{"id":"first","name":"First","block":"First","category":[],"factor":10.0,"width_mm":8,"height_mm":8,"anchor":[0.5,0.5]}});
+    s.execute("electrical.symbol.insert", &request).unwrap();
+    let handle = *s.doc().unwrap().model.handles().first().unwrap();
+    s.doc_mut()
+        .unwrap()
+        .modify_entity(handle, |e| {
+            e.common.xdata.push(RawTag { code: 1001, value: "CC_AMBIENTE_REF".into() });
+            e.common.xdata.push(RawTag { code: 1000, value: "{\"room\":\"F00\"}".into() });
+        })
+        .unwrap();
+    let original = s.doc().unwrap().entity(handle).unwrap().clone();
+    let copy = s.doc_mut().unwrap().add(&Space::Model, original.common.clone(), original.kind.clone()).unwrap();
+    let mut p = s.execute("electrical.symbol.read", &json!({"handle":handle.hex()})).unwrap();
+    assert_eq!(p["at"], json!([25.0, 35.0]));
+    p["backup_dir"] = json!(root);
+    p["height_cm"] = json!(125);
+    p["side"] = json!(3);
+    let result = s.execute("electrical.symbol.update", &p).unwrap();
+    assert!(std::path::Path::new(result["backup"].as_str().unwrap()).is_file());
+    let updated = s.execute("electrical.symbol.read", &json!({"handle":handle.hex()})).unwrap();
+    assert_eq!(updated["installation_height_cm"], 125.0);
+    assert_eq!(updated["side"], 3);
+    assert_eq!(updated["rotation"], 90.0);
+    assert_eq!(s.doc().unwrap().entity(copy).unwrap().kind, original.kind);
+    assert_eq!(s.doc().unwrap().entity(handle).unwrap().common.xdata.iter().filter(|t| t.code == 1001 && t.value == "CC_SIMBOLO").count(), 1);
+    assert!(s.doc().unwrap().entity(handle).unwrap().common.xdata.iter().any(|t| t.value == "CC_AMBIENTE_REF"));
+    let before = s.state().unwrap().doc.clone();
+    assert!(s.execute("electrical.symbol.update", &p).is_err()); // Stale revision.
+    assert!(Arc::ptr_eq(&before, &s.state().unwrap().doc));
+    s.execute("undo", &json!({})).unwrap();
+    assert_eq!(s.execute("electrical.symbol.read", &json!({"handle":handle.hex()})).unwrap()["installation_height_cm"], 100.0);
+    let mut replacement = s.execute("electrical.symbol.read", &json!({"handle":handle.hex()})).unwrap();
+    replacement["symbol"]["id"] = json!("second");
+    replacement["symbol"]["name"] = json!("Second");
+    replacement["symbol"]["block"] = json!("Second");
+    replacement["library"] = json!(library_path);
+    replacement["backup_dir"] = json!(root);
+    s.execute("electrical.symbol.update", &replacement).unwrap();
+    let updated = s.execute("electrical.symbol.read", &json!({"handle":handle.hex()})).unwrap();
+    assert_eq!(updated["symbol"]["id"], "second");
+    assert_eq!(updated["at"], json!([25.0, 35.0]));
+    assert_eq!(updated["rotation"], 90.0);
+    assert_eq!(s.doc().unwrap().entity(copy).unwrap().kind, original.kind);
+    let roundtrip = cadcraft_io::read(&cadcraft_io::write(s.doc().unwrap(), "drawing.dxf").unwrap(), "drawing.dxf").unwrap();
+    *s.doc_mut().unwrap() = roundtrip;
+    assert_eq!(s.execute("electrical.symbol.read", &json!({"handle":handle.hex()})).unwrap()["symbol"]["id"], "second");
+    let mut p = s.execute("electrical.symbol.read", &json!({"handle":handle.hex()})).unwrap();
+    p["backup_dir"] = json!(library_path);
+    p["height_cm"] = Value::Null;
+    let before = s.state().unwrap().doc.clone();
+    assert!(s.execute("electrical.symbol.update", &p).is_err());
+    assert!(Arc::ptr_eq(&before, &s.state().unwrap().doc));
+    p["backup_dir"] = json!(root);
+    s.execute("electrical.symbol.update", &p).unwrap();
+    assert!(s.execute("electrical.symbol.read", &json!({"handle":handle.hex()})).unwrap()["installation_height_cm"].is_null());
+    // Native CAD transforms must be incorporated once, with height text rebuilt horizontally.
+    s.doc_mut()
+        .unwrap()
+        .modify_entity(handle, |e| {
+            if let EntityKind::Insert(i) = &mut e.kind {
+                i.scale = Vec3::new(1.5, 1.5, 1.0);
+                i.rotation = std::f64::consts::FRAC_PI_4;
+            }
+        })
+        .unwrap();
+    let mut p = s.execute("electrical.symbol.read", &json!({"handle":handle.hex()})).unwrap();
+    assert_eq!(p["symbol"]["factor"], 15.0);
+    assert_eq!(p["rotation"], 135.0);
+    p["height_cm"] = json!(110);
+    p["backup_dir"] = json!(root);
+    let result = s.execute("electrical.symbol.update", &p).unwrap();
+    let reread = s.execute("electrical.symbol.read", &json!({"handle":handle.hex()})).unwrap();
+    assert_eq!(reread["symbol"]["factor"], 15.0);
+    assert_eq!(reread["rotation"], 135.0);
+    let block = s.doc().unwrap().block(result["block"].as_str().unwrap()).unwrap();
+    assert!(block.entities.iter().any(|e| matches!(&e.kind,EntityKind::Text(t) if t.value=="H110"&&t.rotation==0.0)));
+    std::fs::remove_dir_all(root).unwrap();
+}

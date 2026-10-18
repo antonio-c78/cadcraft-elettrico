@@ -412,7 +412,7 @@ fn commit(s: &mut Session) -> Result<Value> {
             let mut active = false;
             entity.common.xdata.retain(|tag| {
                 if tag.code == 1001 {
-                    active = tag.value == "CC_COMPOSITORE";
+                    active = matches!(tag.value.as_str(), "CC_COMPOSITORE" | "CC_SIMBOLO");
                 }
                 !active
             });

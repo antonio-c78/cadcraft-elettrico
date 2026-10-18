@@ -58,7 +58,7 @@ fn refresh(app: &mut CadApp) -> Result<(), String> {
     Ok(())
 }
 
-fn start(app: &mut CadApp, handle: Option<String>) -> Result<(), String> {
+pub(super) fn start(app: &mut CadApp, handle: Option<String>) -> Result<(), String> {
     let params = if let Some(handle) = handle { json!({"handle":handle}) } else { json!({"label_height":2.0*app.elettrico.settings_factor()}) };
     app.run("electrical.room.prepare", params)?;
     app.elettrico.rooms.active = false;
@@ -69,6 +69,10 @@ fn start(app: &mut CadApp, handle: Option<String>) -> Result<(), String> {
     super::manager::hide(&mut app.elettrico.manager);
     app.start("electrical.room.place");
     Ok(())
+}
+
+pub(super) fn hide(state: &mut State) {
+    state.open = false;
 }
 
 pub(super) fn command(app: &mut CadApp, id: &str) -> Result<Value, String> {

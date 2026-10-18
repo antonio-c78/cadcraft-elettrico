@@ -87,7 +87,7 @@ pub(super) fn sheet(ui: &mut egui::Ui, state: &mut State, live: &elettrico::Stat
     ui.label(format!(
         "{} simboli · {}",
         indices.len(),
-        if state.insertion { "clicca un'anteprima per inserirla nel disegno" } else { "clicca un'anteprima per modificare gli attributi" }
+        if state.insertion { "clicca un'anteprima per scegliere il simbolo" } else { "clicca un'anteprima per modificare gli attributi" }
     ));
     if indices.is_empty() {
         ui.label("Nessun simbolo corrisponde alla ricerca.");

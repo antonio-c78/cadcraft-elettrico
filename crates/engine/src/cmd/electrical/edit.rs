@@ -17,12 +17,20 @@ pub(super) fn specs() -> Vec<CommandSpec> {
 fn target(s: &Session, p: &Value) -> Result<Handle> {
     let handles = crate::cmd::targets(s, p)?;
     if handles.len() != 1 {
-        return Err(bad("electrical.read", "Seleziona una sola scatola elettrica."));
+        return Err(bad("electrical.read", "Seleziona un solo oggetto elettrico."));
     }
     handles.first().copied().ok_or_else(|| bad("electrical.read", "Seleziona una scatola."))
 }
 
 fn read(s: &mut Session, p: &Value) -> Result<Value> {
+    read_native(s, p, false)
+}
+
+pub(super) fn read_symbol(s: &mut Session, p: &Value) -> Result<Value> {
+    read_native(s, p, true)
+}
+
+fn read_native(s: &Session, p: &Value, symbol: bool) -> Result<Value> {
     let h = target(s, p)?;
     let d = s.doc()?;
     if s.space() != Space::Model || d.space_of(h) != Some(Space::Model) {
@@ -52,7 +60,7 @@ fn read(s: &mut Session, p: &Value) -> Result<Value> {
     let mut text = String::new();
     for tag in &e.common.xdata {
         if tag.code == 1001 {
-            active = tag.value == "CC_COMPOSITORE";
+            active = tag.value == if symbol { "CC_SIMBOLO" } else { "CC_COMPOSITORE" };
         } else if active && tag.code == 1000 {
             if text.len().saturating_add(tag.value.len()) > 32768 {
                 return Err(bad("electrical.read", "Dati scatola troppo grandi."));
@@ -64,7 +72,18 @@ fn read(s: &mut Session, p: &Value) -> Result<Value> {
     if metadata["version"] != 1 {
         return Err(bad("electrical.read", "Versione scatola non supportata."));
     }
-    let mut c: Composition = serde_json::from_value(metadata["composition"].clone()).map_err(|e| bad("electrical.read", e.to_string()))?;
+    let mut c: Composition = if symbol {
+        let saved: symbol::Symbol = serde_json::from_value(metadata["symbol"].clone()).map_err(|e| bad("electrical.symbol.read", e.to_string()))?;
+        Composition {
+            capacity: 3,
+            items: vec![Component { name: saved.name, block: saved.block, modules: 1 }],
+            factor: saved.factor,
+            installation_height_cm: serde_json::from_value(metadata["installation_height_cm"].clone())
+                .map_err(|e| bad("electrical.symbol.read", e.to_string()))?,
+        }
+    } else {
+        serde_json::from_value(metadata["composition"].clone()).map_err(|e| bad("electrical.read", e.to_string()))?
+    };
     validate(&c)?;
     let text_count = block.entities.iter().filter(|e| matches!(&e.kind, EntityKind::Text(_))).count();
     if text_count != usize::from(c.installation_height_cm.is_some())
@@ -78,6 +97,9 @@ fn read(s: &mut Session, p: &Value) -> Result<Value> {
     }
     c.factor *= ins.scale.x;
     validate(&c)?;
+    if symbol {
+        metadata["symbol"]["factor"] = json!(c.factor);
+    }
     let rotation = metadata["rotation"]
         .as_f64()
         .filter(|r| r.is_finite() && r.abs() <= 360000.0)
@@ -101,20 +123,28 @@ fn read(s: &mut Session, p: &Value) -> Result<Value> {
 }
 
 fn prepare_edit(s: &mut Session, p: &Value) -> Result<Value> {
+    prepare_native(s, p, false)
+}
+
+fn prepare_native(s: &mut Session, p: &Value, symbol: bool) -> Result<Value> {
     if s.running.is_some() {
         return Err(bad("electrical.update", "Termina il comando corrente."));
     }
-    let old = read(s, p)?;
+    let old = read_native(s, p, symbol)?;
     if p["uid"].as_u64() != old["uid"].as_u64() || p["revision"].as_u64() != old["revision"].as_u64() {
-        return Err(bad("electrical.update", "Il disegno è cambiato. Riapri Modifica scatola."));
+        return Err(bad("electrical.update", "Il disegno è cambiato. Riapri la modifica dell'oggetto."));
     }
     let h = target(s, p)?;
-    let c: Composition = serde_json::from_value(p.get("composition").cloned().unwrap_or_else(|| old["composition"].clone()))
-        .map_err(|e| bad("electrical.update", e.to_string()))?;
+    let source = if symbol { &old["composition"] } else { p.get("composition").unwrap_or(&old["composition"]) };
+    let mut c: Composition = serde_json::from_value(source.clone()).map_err(|e| bad("electrical.update", e.to_string()))?;
+    if symbol && let Some(height) = p.get("height_cm") {
+        c.installation_height_cm = serde_json::from_value(height.clone()).map_err(|e| bad("electrical.symbol.update", e.to_string()))?;
+    }
     validate(&c)?;
     let mut previous = old["composition"].clone();
     previous["installation_height_cm"] = json!(c.installation_height_cm);
-    let (geometry, geometry_rotation) = if previous == json!(c) {
+    let replacement_symbol = symbol && p.get("symbol").is_some_and(|v| v != &old["symbol"]);
+    let (geometry, geometry_rotation) = if !replacement_symbol && previous == json!(c) {
         let d = s.doc()?;
         let e = d.entity(h).ok_or_else(|| bad("electrical.update", "Scatola assente."))?;
         let EntityKind::Insert(ins) = &e.kind else {
@@ -134,6 +164,11 @@ fn prepare_edit(s: &mut Session, p: &Value) -> Result<Value> {
             }
         }
         (geometry, old["baked_rotation"].as_f64().unwrap_or(0.0))
+    } else if replacement_symbol {
+        symbol::prepare(s, p)?;
+        let prepared = s.electrical.take().ok_or_else(|| bad("electrical.symbol.update", "Simbolo non preparato."))?;
+        c.factor = prepared.composition.factor;
+        (prepared.geometry, 0.0)
     } else {
         let library = p["library"].as_str().ok_or_else(|| bad("electrical.update", "Carica la libreria per cambiare la composizione."))?;
         (read_geometry(library, &c)?, 0.0)
@@ -157,7 +192,14 @@ fn prepare_edit(s: &mut Session, p: &Value) -> Result<Value> {
     }
     s.electrical = Some(Placement {
         layers: layers::Layers::parse(p.get("layers").or_else(|| old.get("layers")))?,
-        symbol: None,
+        symbol: if symbol {
+            Some(
+                serde_json::from_value(p.get("symbol").unwrap_or(&old["symbol"]).clone())
+                    .map_err(|e| bad("electrical.symbol.update", e.to_string()))?,
+            )
+        } else {
+            None
+        },
         composition: c,
         point: Some(at),
         rotation: rotation.rem_euclid(360.0),
@@ -175,6 +217,13 @@ fn prepare_edit(s: &mut Session, p: &Value) -> Result<Value> {
 
 fn update(s: &mut Session, p: &Value) -> Result<Value> {
     prepare_edit(s, p)?;
+    let result = commit(s);
+    s.electrical = None;
+    result
+}
+
+pub(super) fn update_symbol(s: &mut Session, p: &Value) -> Result<Value> {
+    prepare_native(s, p, true)?;
     let result = commit(s);
     s.electrical = None;
     result

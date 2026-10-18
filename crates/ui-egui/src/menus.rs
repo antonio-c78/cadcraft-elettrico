@@ -15,6 +15,19 @@ const RECENT_CLEAR: &str = "ui.recent.clear";
 
 /// UI-only commands: (id, label, menu path, shortcut).
 pub const UI_COMMANDS: &[(&str, &str, &[&str], Option<&str>)] = &[
+    ("ui.elettrico.context.box", "Modifica scatola...", &[], None),
+    ("ui.elettrico.context.box_height", "Modifica altezza...", &[], None),
+    ("ui.elettrico.context.box_label", "Posiziona testo altezza...", &[], None),
+    ("ui.elettrico.context.symbol", "Sostituisci simbolo...", &[], None),
+    ("ui.elettrico.context.symbol_height", "Modifica altezza...", &[], None),
+    ("ui.elettrico.context.symbol_label", "Posiziona testo altezza...", &[], None),
+    ("ui.elettrico.context.room", "Modifica ambiente...", &[], None),
+    ("ui.elettrico.context.redraw", "Ridisegna perimetro...", &[], None),
+    ("ui.elettrico.context.members", "Mostra componenti assegnati", &[], None),
+    ("ui.elettrico.context.delete", "Elimina ambiente...", &[], None),
+    ("ui.elettrico.context.info", "Ambiente di appartenenza...", &[], None),
+    ("ui.elettrico.context.assign", "Assegna / cambia ambiente...", &[], None),
+    ("ui.elettrico.context.auto", "Ripristina assegnazione automatica...", &[], None),
     ("ui.elettrico.room", "Definisci ambiente...", &["Elettrico", "Definisci ambiente..."], None),
     ("ui.elettrico.rooms", "Gestione ambienti...", &["Elettrico", "Gestione ambienti..."], None),
     ("ui.elettrico.symbols", "Inserisci simbolo...", &["Elettrico", "Inserisci simbolo..."], None),
