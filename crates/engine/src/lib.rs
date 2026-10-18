@@ -672,6 +672,7 @@ pub struct Session {
     /// What the last HATCHPICK kept (the Hatch and Gradient dialog's picks).
     pub hatch_picks: Option<cmd::hatch::HatchPicks>,
     pub electrical: Option<cmd::electrical::Placement>,
+    pub electrical_room: Option<cmd::electrical::rooms::Draft>,
 }
 
 impl Default for Session {
@@ -721,6 +722,7 @@ impl Session {
             lisp_last: None,
             hatch_picks: None,
             electrical: None,
+            electrical_room: None,
         }
     }
     pub fn new_drawing(&mut self, metric: bool) -> usize {

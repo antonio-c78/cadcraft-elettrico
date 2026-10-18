@@ -193,11 +193,13 @@ pub fn electrical_toolbar(app: &mut CadApp, ui: &mut egui::Ui) {
                     (Icon::ElectricalEdit, "ui.elettrico.edit", "Modifica scatola...", true),
                     (Icon::ElectricalSymbol, "ui.elettrico.symbols", "Inserisci simbolo...", true),
                     (Icon::ElectricalCatalog, "ui.elettrico.manager", "Gestione catalogo simboli...", false),
+                    (Icon::Area, "ui.elettrico.room", "Definisci ambiente...", true),
+                    (Icon::List, "ui.elettrico.rooms", "Gestione ambienti...", true),
                 ]
                 .into_iter()
                 .enumerate()
                 {
-                    if index == 2 {
+                    if index == 2 || index == 4 {
                         ui.separator();
                     }
                     ui.add_enabled_ui(!busy && (!needs_doc || has_doc), |ui| {

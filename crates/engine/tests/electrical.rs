@@ -51,6 +51,13 @@ fn editing_replaces_only_one_reference_preserves_geometry_supports_seven_and_is_
         })
         .unwrap();
     // A second reference deliberately shares the original definition, just like COPY.
+    s.doc_mut()
+        .unwrap()
+        .modify_entity(handle, |e| {
+            e.common.xdata.push(cadcraft_engine::doc::RawTag { code: 1001, value: "CC_AMBIENTE_REF".into() });
+            e.common.xdata.push(cadcraft_engine::doc::RawTag { code: 1000, value: "{\"room\":\"F00\"}".into() });
+        })
+        .unwrap();
     let original = s.doc().unwrap().entity(handle).unwrap().clone();
     let copy = s.doc_mut().unwrap().add(&cadcraft_engine::doc::Space::Model, original.common.clone(), original.kind.clone()).unwrap();
     let original_block = inserted["block"].as_str().unwrap();
@@ -87,6 +94,7 @@ fn editing_replaces_only_one_reference_preserves_geometry_supports_seven_and_is_
     assert!(block.entities.iter().any(|e| matches!(&e.kind,EntityKind::Text(t) if t.value=="H120" && t.rotation==0.0)));
     assert!(block.entities.iter().filter(|e| matches!(&e.kind, EntityKind::Text(_))).all(|e| e.common.layer == "EL_ALTEZZE"));
     assert_eq!(s.doc().unwrap().entity(handle).unwrap().common.layer, "EL_COMPONENTI");
+    assert!(s.doc().unwrap().entity(handle).unwrap().common.xdata.iter().any(|t| t.code == 1000 && t.value == "{\"room\":\"F00\"}"));
     // A stale dialog may not overwrite later drawing changes.
     assert!(s.execute("electrical.update", &edit).is_err());
     s.execute("undo", &json!({})).unwrap();

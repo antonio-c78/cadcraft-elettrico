@@ -11,6 +11,7 @@ use crate::{Accept, Input, Interactive, Prompt, Result, Session, Step};
 
 mod edit;
 mod layers;
+pub mod rooms;
 mod symbol;
 
 #[derive(Clone, Deserialize, Serialize)]
@@ -72,6 +73,7 @@ pub fn specs() -> Vec<CommandSpec> {
     ];
     commands.extend(edit::specs());
     commands.extend(symbol::specs());
+    commands.extend(rooms::specs());
     commands
 }
 

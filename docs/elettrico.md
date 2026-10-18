@@ -268,3 +268,50 @@ Hidden height layers are allowed for insertion; locked height layers refuse chan
 Existing drawings are never rewritten on opening. Editing an older native box applies
 the new default split to that reference only, with backup and Undo; other references
 sharing its original definition remain unchanged. No bulk migration is performed.
+
+## Ambienti
+
+Elettrico → Definisci ambiente (also on the electrical toolbar) starts a provisional
+boundary. Click its vertices, then press Enter, click the first vertex or choose
+Chiudi perimetro. The final window requests a room name, optional floor and text
+height in drawing units. Salva ambiente creates one block reference containing a
+closed straight polyline and its label. Cancel leaves the drawing untouched. The
+new `EL_AMBIENTI` layer is green and nonplotting by default; existing layer settings
+are preserved. The layer can be hidden or enabled for plotting through CADCraft.
+
+Gestione ambienti lists room names, floors and the count of native electrical
+objects (a composed box counts as one object). Modify renames the room or redraws
+its perimeter, preserving its reference handle and manual assignments. Copies get
+their own handles; changing one reference never edits a shared definition. A label
+is positioned inside a concave perimeter. Boundaries are limited to 3–512 vertices;
+zero-length sides, retracing, self-intersections and self-touches are rejected.
+
+Room identity is the native model-space reference handle, persisted by DXF; room
+metadata uses XDATA `CC_AMBIENTE` version 1. Rooms can be moved/copied normally;
+reads use the actual transformed perimeter. Nonuniform or mirrored scaling is
+rejected. Up to 512 rooms and 20,000 electrical objects are supported, with a bounded
+scan budget. Definitions may overlap (including floors drawn on the same plan),
+but an ambiguous location is never silently assigned.
+
+Assignments are read from each electrical reference's insertion point, independently
+of layer visibility. Strict interior gives automatic membership; boundary, outside,
+overlap and missing manually assigned room are reported separately. Select native
+boxes/symbols in the drawing, choose a room in the manager and use Assegna selezionati
+to override membership. Assegnazione automatica clears that override for the selected
+objects. XDATA `CC_AMBIENTE_REF` stores the room handle and survives native box edits.
+Refresh the manager to reread positions after CAD edits. These are object counts,
+not an exported bill of materials or a count of fruits inside compositions.
+
+All create/edit/delete/assignment commits have a pre-change DXF backup and one Undo.
+No client drawing is converted on opening. Geometry and metadata remain in the
+drawing, not in the external symbol catalog. Native commands are:
+
+- `electrical.room.prepare {handle?,label_height?,backup_dir?}` and interactive
+  `electrical.room.place`; `electrical.room.options` accepts `name`, `floor`,
+  `label_height` and `action: close|undo|redraw`.
+- `electrical.room.create {points:[[x,y],...],name,floor?,label_height?,backup_dir?}`.
+- `electrical.room.list {}` and `electrical.room.scan {}` are read-only.
+- `electrical.room.assign {room:handle|null,handles?,backup_dir?}` uses the current
+  selection when handles are omitted; null returns to automatic membership.
+- `electrical.room.delete {handle,backup_dir?}` deletes only that reference. Existing
+  overrides to a deleted room are flagged until reassigned.

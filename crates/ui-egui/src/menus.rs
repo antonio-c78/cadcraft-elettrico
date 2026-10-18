@@ -15,6 +15,8 @@ const RECENT_CLEAR: &str = "ui.recent.clear";
 
 /// UI-only commands: (id, label, menu path, shortcut).
 pub const UI_COMMANDS: &[(&str, &str, &[&str], Option<&str>)] = &[
+    ("ui.elettrico.room", "Definisci ambiente...", &["Elettrico", "Definisci ambiente..."], None),
+    ("ui.elettrico.rooms", "Gestione ambienti...", &["Elettrico", "Gestione ambienti..."], None),
     ("ui.elettrico.symbols", "Inserisci simbolo...", &["Elettrico", "Inserisci simbolo..."], None),
     ("ui.elettrico.symbol.insert", "Inserisci simbolo selezionato", &[], None),
     ("ui.elettrico.manager", "Gestione catalogo simboli...", &["Elettrico", "Gestione catalogo simboli..."], None),

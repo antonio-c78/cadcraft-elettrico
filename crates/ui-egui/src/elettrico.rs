@@ -8,6 +8,7 @@ mod catalog;
 mod edit;
 mod manager;
 mod preview;
+mod rooms;
 mod symbol;
 
 fn catalog_environment() -> Option<String> {
@@ -41,6 +42,7 @@ pub struct State {
     replacing: Option<usize>,
     manager: manager::State,
     symbol: symbol::State,
+    rooms: rooms::State,
 }
 
 impl Default for State {
@@ -65,6 +67,7 @@ impl Default for State {
             replacing: None,
             manager: manager::State::default(),
             symbol: symbol::State::default(),
+            rooms: rooms::State::default(),
         }
     }
 }
@@ -98,6 +101,9 @@ impl State {
 }
 
 pub fn route(app: &mut CadApp, id: &str, params: &Value) -> Option<Result<Value, String>> {
+    if matches!(id, "ui.elettrico.room" | "ui.elettrico.rooms") {
+        return Some(rooms::command(app, id));
+    }
     if matches!(id, "ui.elettrico.symbols" | "ui.elettrico.symbol.insert") {
         return Some(symbol::command(app, id, params));
     }
@@ -195,6 +201,7 @@ pub fn route(app: &mut CadApp, id: &str, params: &Value) -> Option<Result<Value,
 }
 
 pub fn show(app: &mut CadApp, ctx: &egui::Context) {
+    rooms::show(app, ctx);
     edit::poll(app, ctx);
     placement_window(app, ctx);
     if app.session.running.as_ref().is_some_and(|r| matches!(r.id.as_str(), "electrical.place" | "electrical.symbol.place")) {
