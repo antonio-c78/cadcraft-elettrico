@@ -673,6 +673,7 @@ pub struct Session {
     pub hatch_picks: Option<cmd::hatch::HatchPicks>,
     pub electrical: Option<cmd::electrical::Placement>,
     pub electrical_room: Option<cmd::electrical::rooms::Draft>,
+    pub electrical_measure: Option<cmd::electrical::calibration::Pick>,
 }
 
 impl Default for Session {
@@ -723,6 +724,7 @@ impl Session {
             hatch_picks: None,
             electrical: None,
             electrical_room: None,
+            electrical_measure: None,
         }
     }
     pub fn new_drawing(&mut self, metric: bool) -> usize {

@@ -9,6 +9,7 @@ use serde_json::{Value, json};
 use super::{CommandSpec, bad};
 use crate::{Accept, Input, Interactive, Prompt, Result, Session, Step};
 
+pub mod calibration;
 mod edit;
 mod layers;
 pub mod rooms;
@@ -74,6 +75,7 @@ pub fn specs() -> Vec<CommandSpec> {
     commands.extend(edit::specs());
     commands.extend(symbol::specs());
     commands.extend(rooms::specs());
+    commands.extend(calibration::specs());
     commands
 }
 

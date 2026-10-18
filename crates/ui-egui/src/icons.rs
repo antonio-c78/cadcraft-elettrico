@@ -10,6 +10,7 @@ use crate::theme::Tokens;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Icon {
+    KnownDistanceScale,
     ElectricalCompose,
     ElectricalEdit,
     ElectricalSymbol,
@@ -903,6 +904,17 @@ pub fn paint(p: &Painter, rect: Rect, icon: Icon, dim: bool) {
         Equal => {
             pen.l(5.0, 9.0, 19.0, 9.0);
             pen.la(5.0, 15.0, 19.0, 15.0);
+        }
+        KnownDistanceScale => {
+            pen.l(3.0, 4.0, 3.0, 18.0);
+            pen.l(21.0, 4.0, 21.0, 18.0);
+            pen.la(3.0, 8.0, 21.0, 8.0);
+            pen.arrow_tip(3.0, 8.0, -1.0, 0.0, a);
+            pen.arrow_tip(21.0, 8.0, 1.0, 0.0, a);
+            pen.l(3.0, 17.0, 13.0, 17.0);
+            pen.la(13.0, 17.0, 21.0, 17.0);
+            pen.dot(3.0, 8.0);
+            pen.dot(21.0, 8.0);
         }
         Measure | Distance => {
             pen.poly(&[(3.0, 15.0), (21.0, 15.0), (21.0, 20.0), (3.0, 20.0)], true, b);

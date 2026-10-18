@@ -6,6 +6,8 @@ and menu infrastructure so upstream updates remain manageable.
 
 ## First native interface
 
+- Elettrico → Scala da misura nota is the first visible electrical menu item and
+  toolbar button, with an original CADCraft-style dimension/scale icon.
 - Elettrico → Componi scatola, also Ctrl+Shift+E on Windows.
 - Supports with 3, 4, 6 or 7 slots; provisional component sizes match the external prototype.
 - UNEL occupies two slots. Adding components or reducing capacity cannot overfill a box.
@@ -15,6 +17,38 @@ and menu infrastructure so upstream updates remain manageable.
   fitted and centered in their occupied slots. The optional height appears above the box.
 
 Its composition and settings currently last for the application session only.
+
+## Prepare a plan from a known distance
+
+`Scala da misura nota...` opens one guided window: choose the whole model-space
+plan or the current CAD selection, specify model units (mm/cm/m), and pick two
+distinct points using normal CAD snaps. Prepared objects are highlighted. Nothing
+in the drawing changes while measuring or cancelling. The first point is the fixed
+scale base; the real length accepts a decimal comma and an independent mm/cm/m unit.
+The confirmation shows the measured length, uniform factor, target count and any
+included native electrical boxes, symbols or rooms. Model units are taken from
+INSUNITS when supported; otherwise the user must choose them explicitly.
+
+Applying calls the same native transform as SCALE after complete target validation
+and a successful DXF backup. Locked targets reject the entire operation rather
+than silently leaving part of the plan unscaled; hidden but unlocked model objects
+are included in whole-plan mode. Paper-space entities and shared block definitions
+are not transformed. The chosen INSUNITS and the geometry are one undoable action.
+Prepared handles, document UID and revision are pinned, so changing selection does
+not redirect an operation and drawing changes require repeating the measure.
+Lengths, coordinates, factors and selection size are bounded; zero reference
+lengths, invalid units, duplicate/missing handles and stale plans are rejected.
+
+After applying, the same window offers a read-only two-point check with optional
+expected length and a displayed difference. It never rescales the drawing. The
+original selection is restored on closing. Calibrate before defining rooms or
+inserting electrical components whenever possible, since included native objects
+are scaled just like any other selected geometry.
+
+Engine commands are `electrical.calibration.prepare` (scope/selection snapshot),
+`electrical.calibration.pick` (provisional interactive two-point measurement), and
+`electrical.calibration.apply` (explicit points, length, units, handles and snapshot).
+JSON execution never opens the guided window.
 
 ## Native placement
 

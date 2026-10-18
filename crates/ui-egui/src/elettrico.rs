@@ -4,6 +4,7 @@ use serde_json::{Value, json};
 
 use crate::{CadApp, theme::Tokens};
 
+mod calibration;
 mod catalog;
 pub(crate) mod context;
 mod edit;
@@ -45,6 +46,7 @@ pub struct State {
     symbol: symbol::State,
     rooms: rooms::State,
     context: context::State,
+    calibration: calibration::State,
 }
 
 impl Default for State {
@@ -71,6 +73,7 @@ impl Default for State {
             symbol: symbol::State::default(),
             rooms: rooms::State::default(),
             context: context::State::default(),
+            calibration: calibration::State::default(),
         }
     }
 }
@@ -104,6 +107,9 @@ impl State {
 }
 
 pub fn route(app: &mut CadApp, id: &str, params: &Value) -> Option<Result<Value, String>> {
+    if id == "ui.elettrico.calibrate" {
+        return Some(calibration::command(app));
+    }
     if id.starts_with("ui.elettrico.context.") {
         return Some(context::command(app, id));
     }
@@ -207,6 +213,7 @@ pub fn route(app: &mut CadApp, id: &str, params: &Value) -> Option<Result<Value,
 }
 
 pub fn show(app: &mut CadApp, ctx: &egui::Context) {
+    calibration::show(app, ctx);
     context::show(app, ctx);
     rooms::show(app, ctx);
     edit::poll(app, ctx);

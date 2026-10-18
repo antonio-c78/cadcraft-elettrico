@@ -189,6 +189,7 @@ pub fn electrical_toolbar(app: &mut CadApp, ui: &mut egui::Ui) {
                 ui.label(egui::RichText::new("Elettrico").strong());
                 ui.add_space(12.0);
                 for (index, (icon, command, label, needs_doc)) in [
+                    (Icon::KnownDistanceScale, "ui.elettrico.calibrate", "Scala da misura nota...", true),
                     (Icon::ElectricalCompose, "ui.elettrico.compose", "Componi scatola...", true),
                     (Icon::ElectricalEdit, "ui.elettrico.edit", "Modifica scatola...", true),
                     (Icon::ElectricalSymbol, "ui.elettrico.symbols", "Inserisci simbolo...", true),
@@ -199,7 +200,7 @@ pub fn electrical_toolbar(app: &mut CadApp, ui: &mut egui::Ui) {
                 .into_iter()
                 .enumerate()
                 {
-                    if index == 2 || index == 4 {
+                    if index == 1 || index == 3 || index == 5 {
                         ui.separator();
                     }
                     ui.add_enabled_ui(!busy && (!needs_doc || has_doc), |ui| {
