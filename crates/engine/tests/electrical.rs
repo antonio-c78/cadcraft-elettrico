@@ -36,6 +36,20 @@ fn editing_replaces_only_one_reference_preserves_geometry_supports_seven_and_is_
     let request = json!({"library":path,"backup_dir":root,"composition":{"capacity":3,"items":[{"name":"Switch","block":"Switch","modules":1}],"factor":1.0,"installation_height_cm":100},"at":[20,30],"rotation":90});
     let inserted = s.execute("electrical.insert", &request).unwrap();
     let handle = inserted["handle"].as_u64().map(Handle).or_else(|| inserted["handle"].as_str().and_then(Handle::parse_hex)).unwrap();
+    // Simulate an older box: no saved layer configuration, reference on EL_SCATOLE.
+    let mut legacy = metadata(&s);
+    legacy.as_object_mut().unwrap().remove("layers");
+    s.doc_mut().unwrap().ensure_layer("EL_SCATOLE");
+    s.doc_mut()
+        .unwrap()
+        .modify_entity(handle, |e| {
+            e.common.layer = "EL_SCATOLE".into();
+            e.common.xdata.retain(|t| t.code == 1001);
+            for chunk in legacy.to_string().as_bytes().chunks(200) {
+                e.common.xdata.push(cadcraft_engine::doc::RawTag { code: 1000, value: String::from_utf8(chunk.to_vec()).unwrap() });
+            }
+        })
+        .unwrap();
     // A second reference deliberately shares the original definition, just like COPY.
     let original = s.doc().unwrap().entity(handle).unwrap().clone();
     let copy = s.doc_mut().unwrap().add(&cadcraft_engine::doc::Space::Model, original.common.clone(), original.kind.clone()).unwrap();
@@ -68,9 +82,11 @@ fn editing_replaces_only_one_reference_preserves_geometry_supports_seven_and_is_
     assert_eq!(s.doc().unwrap().model.len(), 2);
     assert_eq!(lines(&s, result["block"].as_str().unwrap()), old_lines);
     assert_eq!(s.doc().unwrap().entity(copy).unwrap().kind, original.kind);
-    assert_eq!(s.doc().unwrap().entity(handle).unwrap().common.layer, original.common.layer);
+    assert_eq!(s.doc().unwrap().entity(copy).unwrap().common.layer, "EL_SCATOLE");
     let block = s.doc().unwrap().block(result["block"].as_str().unwrap()).unwrap();
     assert!(block.entities.iter().any(|e| matches!(&e.kind,EntityKind::Text(t) if t.value=="H120" && t.rotation==0.0)));
+    assert!(block.entities.iter().filter(|e| matches!(&e.kind, EntityKind::Text(_))).all(|e| e.common.layer == "EL_ALTEZZE"));
+    assert_eq!(s.doc().unwrap().entity(handle).unwrap().common.layer, "EL_COMPONENTI");
     // A stale dialog may not overwrite later drawing changes.
     assert!(s.execute("electrical.update", &edit).is_err());
     s.execute("undo", &json!({})).unwrap();

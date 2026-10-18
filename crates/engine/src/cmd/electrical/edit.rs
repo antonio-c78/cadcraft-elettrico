@@ -156,6 +156,7 @@ fn prepare_edit(s: &mut Session, p: &Value) -> Result<Value> {
         return Err(bad("electrical.update", "Percorso troppo lungo."));
     }
     s.electrical = Some(Placement {
+        layers: layers::Layers::parse(p.get("layers").or_else(|| old.get("layers")))?,
         symbol: None,
         composition: c,
         point: Some(at),

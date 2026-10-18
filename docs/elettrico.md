@@ -24,9 +24,9 @@ chooses above, below, right or left in drawing coordinates. Its text stays horiz
 this insertion workflow. Cancel before confirmation leaves the drawing unchanged.
 
 Confirmation writes a DXF backup of the entire current drawing, including unsaved edits,
-then adds one block on `EL_SCATOLE`. One Undo removes the entire operation. Backup failures
+then adds one block on the configured components layer (default `EL_COMPONENTI`). One Undo removes the entire operation. Backup failures
 abort insertion. `CADCRAFT_ELECTRICAL_BACKUPS` selects the backup folder; Windows otherwise
-uses `%LOCALAPPDATA%/CADCraft Elettrico/backups`. Locked, frozen or hidden `EL_SCATOLE`
+uses `%LOCALAPPDATA%/CADCraft Elettrico/backups`. Locked, frozen or hidden component layers
 layers must be enabled by the user first. No existing drawing file is overwritten.
 
 Settings includes model units (mm or m). Drawing factor is print scale × percentage / 100,
@@ -224,7 +224,7 @@ then choose above/below/right/left with a live preview and confirm. Blank height
 label-position step. The height label stays horizontal during placement. Dimensions fit
 source geometry proportionally into the catalog paper width/height (default 8 mm each),
 using the catalog normalized anchor (default center). No box frame or slot separators
-are added. Only the final confirmation creates one block on EL_SIMBOLI, preceded by a
+are added. Only the final confirmation creates one block on EL_COMPONENTI, preceded by a
 DXF backup and covered by one Undo. Cancel before confirmation changes no drawing.
 
 CC_SIMBOLO XDATA stores catalog identity, name, source block/category, scale, size, anchor,
@@ -247,3 +247,24 @@ palette del tema e interazione delle altre icone CADCraft. Il nome appare al
 passaggio del mouse. Durante un comando i pulsanti sono disabilitati; senza un
 disegno resta disponibile il catalogo. La barra segue la visibilità generale delle
 barre strumenti e scorre nelle finestre strette.
+
+## Layer dedicati
+
+New boxes and standalone symbols share `EL_COMPONENTI`. Their internal geometry uses
+layer 0, inheriting the reference's component layer. Installation-height text belongs
+to `EL_ALTEZZE` inside the same block: hiding that layer removes only the height;
+moving or copying the reference keeps the text attached. Hiding the components layer
+hides the whole reference, including its text. Properties use ByLayer, so colors and
+lineweights follow the corresponding layers. Existing layer settings are preserved.
+
+`EL_DESCRIZIONI` and `EL_LEGENDA` are also created, ready for future features. All four
+names can be changed in the external catalog's root `layers` object, with string keys
+`components`, `heights`, `descriptions`, `legend`. Names must be valid, distinct,
+nonzero CAD layer names. Missing configuration uses the defaults above. Prepare and
+insert commands accept the same optional `layers` object. The names are retained in
+the object's metadata so later box edits preserve its configuration.
+
+Hidden height layers are allowed for insertion; locked height layers refuse changes.
+Existing drawings are never rewritten on opening. Editing an older native box applies
+the new default split to that reference only, with backup and Undo; other references
+sharing its original definition remain unchanged. No bulk migration is performed.

@@ -103,6 +103,7 @@ fn prepare(s: &mut Session, p: &Value) -> Result<Value> {
         return Err(bad("electrical.symbol.prepare", "Nessuna geometria inseribile."));
     }
     s.electrical = Some(Placement {
+        layers: layers::Layers::parse(p.get("layers"))?,
         composition: Composition { capacity: 3, items: vec![], factor: symbol.factor, installation_height_cm: None },
         symbol: Some(symbol),
         point: None,

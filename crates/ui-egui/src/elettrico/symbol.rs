@@ -82,7 +82,7 @@ pub(super) fn command(app: &mut CadApp, id: &str, p: &Value) -> Result<Value, St
     let source = app.elettrico.library.as_ref().ok_or("Carica il catalogo.")?.source_path.clone();
     let state = &app.elettrico.symbol;
     let factor = f64::from(state.scale) * f64::from(state.percent) / 100.0 / if state.meters { 1000.0 } else { 1.0 };
-    let params = json!({"library":source,"symbol":{"id":c.id,"name":c.name,"block":c.block,"category":c.category,"factor":factor,"width_mm":c.width_mm,"height_mm":c.height_mm,"anchor":c.anchor}});
+    let params = json!({"library":source,"layers":app.elettrico.catalog.extra.get("layers"),"symbol":{"id":c.id,"name":c.name,"block":c.block,"category":c.category,"factor":factor,"width_mm":c.width_mm,"height_mm":c.height_mm,"anchor":c.anchor}});
     app.run("electrical.symbol.prepare", params)?;
     app.elettrico.symbol.open = false;
     app.elettrico.symbol.error = None;

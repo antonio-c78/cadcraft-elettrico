@@ -10,6 +10,7 @@ use super::{CommandSpec, bad};
 use crate::{Accept, Input, Interactive, Prompt, Result, Session, Step};
 
 mod edit;
+mod layers;
 mod symbol;
 
 #[derive(Clone, Deserialize, Serialize)]
@@ -28,6 +29,7 @@ pub struct Composition {
 }
 
 pub struct Placement {
+    layers: layers::Layers,
     pub symbol: Option<symbol::Symbol>,
     pub composition: Composition,
     pub point: Option<Vec2>,
@@ -106,6 +108,7 @@ fn prepare(s: &mut Session, p: &Value) -> Result<Value> {
         return Err(bad("electrical.prepare", "Percorso copia di sicurezza troppo lungo."));
     }
     s.electrical = Some(Placement {
+        layers: layers::Layers::parse(p.get("layers"))?,
         symbol: None,
         composition: c,
         point: None,
@@ -340,12 +343,22 @@ fn commit(s: &mut Session) -> Result<Value> {
         if d.layers.iter().any(|l| l.name.eq_ignore_ascii_case(layer) && (l.locked || !l.on || l.frozen)) {
             return Err(bad("electrical.place", "Attiva e sblocca il layer della scatola."));
         }
+        if let Some(entity) = d.entity(handle)
+            && let EntityKind::Insert(ins) = &entity.kind
+            && let Some(block) = d.block(&ins.block)
+            && block.entities.iter().any(|e| d.layer(&e.common.layer).is_some_and(|l| l.locked))
+        {
+            return Err(bad("electrical.place", "Sblocca i layer del contenuto della scatola."));
+        }
     }
-    let layer = if p.is_symbol() { "EL_SIMBOLI" } else { "EL_SCATOLE" };
+    let layer = p.layers.components.as_str();
     if d.layers.iter().any(|l| l.name.eq_ignore_ascii_case(layer) && (l.locked || !l.on || l.frozen)) {
         return Err(bad("electrical.place", format!("Attiva e sblocca il layer {layer}.")));
     }
-    d.ensure_layer(layer);
+    if p.composition.installation_height_cm.is_some() && d.layer(&p.layers.heights).is_some_and(|l| l.locked) {
+        return Err(bad("electrical.place", format!("Sblocca il layer {}.", p.layers.heights)));
+    }
+    p.layers.ensure(&mut d);
     let name = (1..=100000)
         .map(|n| format!("{}_{n}", if p.is_symbol() { "CC_SIMBOLO" } else { "CC_SCATOLA" }))
         .find(|n| d.block(n).is_none())
@@ -353,15 +366,18 @@ fn commit(s: &mut Session) -> Result<Value> {
     let mut block = Block::new(&name);
     for kind in p.kinds(Vec2::ZERO) {
         let mut entity = Entity::new(d.new_handle(), kind);
-        entity.common.color = cadcraft_color::Color::ByBlock;
+        if matches!(&entity.kind, EntityKind::Text(_)) {
+            entity.common.layer = p.layers.heights.clone();
+        }
+        entity.common.color = cadcraft_color::Color::ByLayer;
         block.entities.push(entity);
     }
     d.blocks.insert(name.clone(), Arc::new(block));
     let side = ["sopra", "sotto", "destra", "sinistra"].get(usize::from(p.side)).unwrap_or(&"sopra");
     let metadata = if let Some(symbol)=&p.symbol {
-        json!({"version":1,"symbol":symbol,"rotation":p.rotation,"installation_height_cm":p.composition.installation_height_cm,"installation_label_position":side})
-    }else{json!({"version":1,"composition":p.composition,"rotation":p.rotation,"installation_label_position":side})}.to_string();
-    let mut common = Common { layer: layer.into(), color: cadcraft_color::Color::Index(7), ..Default::default() };
+        json!({"version":1,"layers":p.layers,"symbol":symbol,"rotation":p.rotation,"installation_height_cm":p.composition.installation_height_cm,"installation_label_position":side})
+    }else{json!({"version":1,"layers":p.layers,"composition":p.composition,"rotation":p.rotation,"installation_label_position":side})}.to_string();
+    let mut common = Common { layer: layer.into(), ..Default::default() };
     common.xdata.push(RawTag { code: 1001, value: if p.is_symbol() { "CC_SIMBOLO" } else { "CC_COMPOSITORE" }.into() });
     let mut chunk = String::new();
     for ch in metadata.chars() {
@@ -399,6 +415,8 @@ fn commit(s: &mut Session) -> Result<Value> {
                 !active
             });
             entity.common.xdata.extend(replacement.common.xdata.clone());
+            entity.common.layer = replacement.common.layer.clone();
+            entity.common.color = cadcraft_color::Color::ByLayer;
             entity.kind = replacement.kind.clone();
         })?;
         target

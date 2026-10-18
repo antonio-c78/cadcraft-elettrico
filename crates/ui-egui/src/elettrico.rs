@@ -442,7 +442,7 @@ pub fn show(app: &mut CadApp, ctx: &egui::Context) {
                 .map(|c| json!({"name":c.name,"modules":c.modules,"block":c.block}))
                 .collect();
             let factor = state.factor();
-            let params = json!({"library":library.source_path,"composition":{"capacity":state.capacity,"items":items,"factor":factor,"installation_height_cm":height}});
+            let params = json!({"library":library.source_path,"layers":state.catalog.extra.get("layers"),"composition":{"capacity":state.capacity,"items":items,"factor":factor,"installation_height_cm":height}});
             app.run("electrical.prepare", params)?;
             app.start("electrical.place");
             Ok::<(), String>(())

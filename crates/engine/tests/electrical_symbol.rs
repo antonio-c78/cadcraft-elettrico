@@ -52,9 +52,24 @@ fn symbol_placement_is_provisional_guided_backed_up_atomic_and_roundtrips() {
     assert_eq!(text.value, "H100");
     assert_eq!(text.rotation, 0.0);
     assert!(text.insert.x > 40.0);
+    for entity in block.entities.iter() {
+        assert_eq!(entity.common.color, cadcraft_color::Color::ByLayer);
+        assert_eq!(entity.common.layer, if matches!(&entity.kind, EntityKind::Text(_)) { "EL_ALTEZZE" } else { "0" });
+    }
+    for layer in ["EL_COMPONENTI", "EL_ALTEZZE", "EL_DESCRIZIONI", "EL_LEGENDA"] {
+        assert!(s.doc().unwrap().layer(layer).is_some());
+    }
+    let mut hidden = s.doc().unwrap().clone();
+    let visible = cadcraft_render::build(&hidden, &cadcraft_engine::doc::Space::Model, &Default::default());
+    hidden.layer_mut("EL_ALTEZZE").unwrap().on = false;
+    let no_height = cadcraft_render::build(&hidden, &cadcraft_engine::doc::Space::Model, &Default::default());
+    assert!(!no_height.prims.is_empty());
+    assert!(no_height.prims.len() < visible.prims.len());
+    hidden.layer_mut("EL_COMPONENTI").unwrap().on = false;
+    assert!(cadcraft_render::build(&hidden, &cadcraft_engine::doc::Space::Model, &Default::default()).prims.is_empty());
     let metadata = |d: &Drawing| -> Value {
         let e = d.model.iter().last().unwrap();
-        assert_eq!(e.common.layer, "EL_SIMBOLI");
+        assert_eq!(e.common.layer, "EL_COMPONENTI");
         assert!(e.common.xdata.iter().any(|t| t.code == 1001 && t.value == "CC_SIMBOLO"));
         let text: String = e.common.xdata.iter().filter(|t| t.code == 1000).map(|t| t.value.as_str()).collect();
         serde_json::from_str(&text).unwrap()
@@ -79,5 +94,15 @@ fn symbol_placement_is_provisional_guided_backed_up_atomic_and_roundtrips() {
     bad["backup_dir"] = json!(path); // A file cannot be a backup directory.
     assert!(s.execute("electrical.symbol.insert", &bad).is_err());
     assert!(Arc::ptr_eq(&before, &s.state().unwrap().doc));
+    let mut custom = inserted.clone();
+    custom["layers"] = json!({"components":"TEST_COMPONENTS","heights":"TEST_HEIGHTS","descriptions":"TEST_DESCRIPTIONS","legend":"TEST_LEGEND"});
+    s.execute("electrical.symbol.insert", &custom).unwrap();
+    assert_eq!(s.doc().unwrap().model.iter().last().unwrap().common.layer, "TEST_COMPONENTS");
+    s.doc_mut().unwrap().layer_mut("TEST_HEIGHTS").unwrap().locked = true;
+    let before = s.state().unwrap().doc.clone();
+    assert!(s.execute("electrical.symbol.insert", &custom).is_err());
+    assert!(Arc::ptr_eq(&before, &s.state().unwrap().doc));
+    custom["layers"]["heights"] = json!("TEST_COMPONENTS");
+    assert!(s.execute("electrical.symbol.prepare", &custom).is_err());
     std::fs::remove_dir_all(root).unwrap();
 }
