@@ -16,6 +16,7 @@ const RECENT_CLEAR: &str = "ui.recent.clear";
 /// UI-only commands: (id, label, menu path, shortcut).
 pub const UI_COMMANDS: &[(&str, &str, &[&str], Option<&str>)] = &[
     ("ui.elettrico.calibrate", "Scala da misura nota...", &["Elettrico", "Scala da misura nota..."], None),
+    ("ui.elettrico.unifilar.new", "Nuovo schema unifilare...", &["Elettrico", "Schemi unifilari", "Nuovo schema unifilare..."], None),
     ("ui.elettrico.context.box", "Modifica scatola...", &[], None),
     ("ui.elettrico.context.box_height", "Modifica altezza...", &[], None),
     ("ui.elettrico.context.box_label", "Posiziona testo altezza...", &[], None),

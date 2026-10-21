@@ -12,6 +12,7 @@ mod manager;
 mod preview;
 mod rooms;
 mod symbol;
+mod unifilar;
 
 fn catalog_environment() -> Option<String> {
     #[cfg(not(target_arch = "wasm32"))]
@@ -47,6 +48,7 @@ pub struct State {
     rooms: rooms::State,
     context: context::State,
     calibration: calibration::State,
+    unifilar: unifilar::State,
 }
 
 impl Default for State {
@@ -74,6 +76,7 @@ impl Default for State {
             rooms: rooms::State::default(),
             context: context::State::default(),
             calibration: calibration::State::default(),
+            unifilar: unifilar::State::default(),
         }
     }
 }
@@ -107,6 +110,9 @@ impl State {
 }
 
 pub fn route(app: &mut CadApp, id: &str, params: &Value) -> Option<Result<Value, String>> {
+    if id == "ui.elettrico.unifilar.new" {
+        return Some(unifilar::command(app, params));
+    }
     if id == "ui.elettrico.calibrate" {
         return Some(calibration::command(app));
     }
@@ -213,6 +219,7 @@ pub fn route(app: &mut CadApp, id: &str, params: &Value) -> Option<Result<Value,
 }
 
 pub fn show(app: &mut CadApp, ctx: &egui::Context) {
+    unifilar::show(app, ctx);
     calibration::show(app, ctx);
     context::show(app, ctx);
     rooms::show(app, ctx);

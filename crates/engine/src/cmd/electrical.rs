@@ -14,6 +14,7 @@ mod edit;
 mod layers;
 pub mod rooms;
 mod symbol;
+mod unifilar;
 
 #[derive(Clone, Deserialize, Serialize)]
 pub struct Component {
@@ -76,6 +77,7 @@ pub fn specs() -> Vec<CommandSpec> {
     commands.extend(symbol::specs());
     commands.extend(rooms::specs());
     commands.extend(calibration::specs());
+    commands.extend(unifilar::specs());
     commands
 }
 
