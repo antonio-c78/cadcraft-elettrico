@@ -98,3 +98,158 @@ fn new_unifilar_is_independent_atomic_and_preserves_cartiglio_on_roundtrip() {
     assert_eq!(s.active, active);
     std::fs::remove_dir_all(root).unwrap();
 }
+
+#[test]
+fn unifilar_placement_owns_column_data_is_atomic_and_markers_do_not_occupy_columns() {
+    use cadcraft_engine::{
+        Input,
+        doc::{Common, Insert, Line, Space},
+        geom::Vec2,
+    };
+    set_io(IoHooks {
+        read: |b, n| cadcraft_io::read(b, n).map_err(|e| e.to_string()),
+        write: |d, n| cadcraft_io::write(d, n).map_err(|e| e.to_string()),
+        plot: None,
+    });
+    let root = std::env::temp_dir()
+        .join(format!("unifilar-place-{}", std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()));
+    std::fs::create_dir(&root).unwrap();
+    let mut library = Drawing::new_metric();
+    for (name, height) in [("DEVICE", 20.0), ("MARK", 5.0)] {
+        let mut block = Block::new(name);
+        let h = library.new_handle();
+        block.entities.push(Entity::new(h, EntityKind::Line(Line { a: Vec3::ZERO, b: Vec3::new(0.0, -height, 0.0) })));
+        let h = library.new_handle();
+        block.entities.push(Entity::new(h, EntityKind::Line(Line { a: Vec3::new(-2.0, -height / 2.0, 0.0), b: Vec3::new(2.0, -height / 2.0, 0.0) })));
+        library.blocks.insert(name.into(), Arc::new(block));
+    }
+    std::fs::write(root.join("symbols.dxf"), cadcraft_io::write(&library, "symbols.dxf").unwrap()).unwrap();
+    let mut cols = Vec::new();
+    for i in 0..2 {
+        let x = 10.0 + i as f64 * 35.0;
+        cols.push(json!({"index":i+1,"bounds":[x,20,x+35.0,220],"axis_x":x+17.5,"symbol_y_range":[100,200],"cells":{
+        "sigla":{"bounds":[x,38,x+35.0,43],"text_center":[x+17.5,40.5],"padding_mm":1.5,"max_lines":1},
+        "descrizione":{"bounds":[x,20,x+35.0,38],"text_center":[x+17.5,29],"padding_mm":1.5,"max_lines":3}}}));
+    }
+    let config = json!({"format":"cadcraft-unifilar-template","version":1,"id":"synthetic","units":"mm","catalog":"catalog.json","columns":cols,"table":{"rows":[{"id":"sigla","label":"Sigla"},{"id":"descrizione","label":"Descrizione"}]},"drawing_area":[0,80,100,220],"pe":{"y":90}});
+    let model = root.join("model.json");
+    std::fs::write(&model, config.to_string()).unwrap();
+    let catalog = json!({"format":"cadcraft-unifilar-symbols","version":1,"library":"symbols.dxf","symbols":[
+        {"id":"device","name":"Synthetic device","block":"DEVICE","category":"Protection","kind":"device","fields":["sigla","descrizione"],"ports":[]},
+        {"id":"marker","name":"Synthetic marker","block":"MARK","category":"Lines","kind":"line_marker","fields":[],"ports":[]}]});
+    std::fs::write(root.join("catalog.json"), catalog.to_string()).unwrap();
+    let mut sheet = Drawing::new_metric();
+    sheet.blocks.insert("TITLE".into(), Arc::new(Block::new("TITLE")));
+    let common = Common {
+        xdata: vec![RawTag { code: 1001, value: "CC_UNIFILARE_MODELO".into() }, RawTag { code: 1000, value: "synthetic".into() }],
+        ..Default::default()
+    };
+    sheet
+        .add(
+            &Space::Model,
+            common,
+            EntityKind::Insert(Insert {
+                block: "TITLE".into(),
+                insert: Vec3::ZERO,
+                scale: Vec3::new(1.0, 1.0, 1.0),
+                rotation: 0.0,
+                attribs: vec![],
+                cols: 1,
+                rows: 1,
+                col_spacing: 0.0,
+                row_spacing: 0.0,
+            }),
+        )
+        .unwrap();
+    let mut s = Session::empty();
+    s.open_drawing(sheet, "Synthetic", None);
+    let mut p = json!({"model":model,"id":"device","fields":{"sigla":"Q1","descrizione":"First circuit"},"at":[15,180],"backup_dir":root});
+    let first = s.execute("electrical.unifilar.insert", &p).unwrap();
+    let h = cadcraft_engine::doc::Handle::parse_hex(first["handle"].as_str().unwrap()).unwrap();
+    let meta = s.execute("electrical.unifilar.read", &json!({"handle":h.hex()})).unwrap();
+    assert_eq!(meta["column"], 1);
+    assert_eq!(meta["at"], json!([27.5, 180.0]));
+    assert!(std::path::Path::new(first["backup"].as_str().unwrap()).exists());
+    let table_world = |s: &Session, h| {
+        let EntityKind::Insert(i) = &s.doc().unwrap().entity(h).unwrap().kind else { panic!() };
+        s.doc()
+            .unwrap()
+            .block(&i.block)
+            .unwrap()
+            .entities
+            .iter()
+            .filter_map(
+                |e| if let EntityKind::Text(t) = &e.kind { (t.value == "First circuit").then_some(t.insert.xy() + i.insert.xy()) } else { None },
+            )
+            .collect::<Vec<_>>()
+    };
+    let initial_table = table_world(&s, h);
+    assert_eq!(initial_table.len(), 1);
+    let before = s.state().unwrap().doc.clone();
+    assert!(s.execute("electrical.unifilar.insert", &p).is_err());
+    assert!(Arc::ptr_eq(&before, &s.state().unwrap().doc));
+    p["at"] = json!([60, 150]);
+    p["fields"] = json!({"sigla":"Q2"});
+    let second = s.execute("electrical.unifilar.insert", &p).unwrap();
+    assert_eq!(second["column"], 2);
+    let copy = s.execute("copy", &json!({"handles":[h.hex()],"delta":[0,0]})).unwrap();
+    let _ = copy;
+    s.execute("u", &json!({})).unwrap();
+    let mut edit = s.execute("electrical.unifilar.read", &json!({"handle":h.hex()})).unwrap();
+    edit["original"] = edit.clone();
+    s.touch();
+    edit["model"] = json!(model);
+    edit["backup_dir"] = json!(root);
+    edit["at"] = json!([20, 130]);
+    s.execute("electrical.unifilar.update", &edit).unwrap();
+    assert_eq!(initial_table, table_world(&s, h));
+    let moved = s.execute("electrical.unifilar.read", &json!({"handle":h.hex()})).unwrap();
+    assert_eq!(moved["at"], json!([27.5, 130.0]));
+    let mut occupied = moved.clone();
+    occupied["model"] = json!(model);
+    occupied["backup_dir"] = json!(root);
+    occupied["at"] = json!([60, 180]);
+    let before = s.state().unwrap().doc.clone();
+    assert!(s.execute("electrical.unifilar.update", &occupied).is_err());
+    assert!(Arc::ptr_eq(&before, &s.state().unwrap().doc));
+    s.execute("u", &json!({})).unwrap();
+    assert_eq!(s.execute("electrical.unifilar.read", &json!({"handle":h.hex()})).unwrap()["at"], json!([27.5, 180.0]));
+    let before = s.state().unwrap().doc.clone();
+    p["fields"] = json!({"sigla":"A".repeat(200)});
+    assert!(s.execute("electrical.unifilar.prepare", &p).is_err());
+    assert!(Arc::ptr_eq(&before, &s.state().unwrap().doc));
+    p["fields"] = json!({"descrizione":"uno\ndue\ntre\nquattro"});
+    assert!(s.execute("electrical.unifilar.prepare", &p).is_err());
+    s.execute("line", &json!({"points":[[90,120],[90,190]]})).unwrap();
+    let marker = json!({"model":model,"id":"marker","at":[90.5,170],"fields":{},"backup_dir":root});
+    let result = s.execute("electrical.unifilar.insert", &marker).unwrap();
+    assert!(result["column"].is_null());
+    let m = s.execute("electrical.unifilar.read", &json!({"handle":result["handle"]})).unwrap();
+    assert_eq!(m["at"], json!([90.0, 170.0]));
+    assert_eq!(m["kind"], "line_marker");
+    let bad = root.join("not-directory");
+    std::fs::write(&bad, b"x").unwrap();
+    let mut fail = marker.clone();
+    fail["backup_dir"] = json!(bad);
+    let before = s.state().unwrap().doc.clone();
+    assert!(s.execute("electrical.unifilar.insert", &fail).is_err());
+    assert!(Arc::ptr_eq(&before, &s.state().unwrap().doc));
+    let saved = cadcraft_io::write(s.doc().unwrap(), "roundtrip.dxf").unwrap();
+    let reopened = cadcraft_io::read(&saved, "roundtrip.dxf").unwrap();
+    let mut re = Session::empty();
+    re.open_drawing(reopened, "roundtrip", None);
+    assert_eq!(re.execute("electrical.unifilar.read", &json!({"handle":h.hex()})).unwrap()["fields"]["descrizione"], "First circuit");
+    p["fields"] = json!({});
+    s.execute("electrical.unifilar.prepare", &p).unwrap();
+    s.touch(); // Zoom/pan redraws may change the revision without changing drawing contents.
+    s.start("electrical.unifilar.place").unwrap();
+    let before = s.state().unwrap().doc.clone();
+    s.cancel();
+    assert!(Arc::ptr_eq(&before, &s.state().unwrap().doc));
+    s.execute("electrical.unifilar.prepare", &p).unwrap();
+    s.execute("new", &json!({"metric":true})).unwrap();
+    assert!(s.start("electrical.unifilar.place").is_err());
+    let _ = Input::Enter;
+    let _ = Vec2::ZERO;
+    std::fs::remove_dir_all(root).unwrap();
+}

@@ -373,6 +373,10 @@ impl CadApp {
             "saveFormat": self.ui.save_format.as_str(),
             "saveVersion": self.ui.save_version,
         });
+        let favorites = elettrico::unifilar_preferences(&self.elettrico);
+        if favorites.as_array().is_some_and(|v| !v.is_empty()) {
+            prefs["unifilarFavorites"] = favorites;
+        }
         if self.spacemouse.settings != spacemouse::Settings::default() {
             prefs["spacemouse"] = json!(self.spacemouse.settings);
         }
@@ -385,6 +389,9 @@ impl CadApp {
     /// Restore preferences saved by [`Self::prefs_json`]; unknown or malformed values are ignored.
     pub fn load_prefs(&mut self, json: &str) {
         let Ok(v) = serde_json::from_str::<Value>(json) else { return };
+        if let Some(favorites) = v.get("unifilarFavorites") {
+            elettrico::load_unifilar_preferences(&mut self.elettrico, favorites);
+        }
         if let Some(prefs) = v.get("spacemouse") {
             let _ = self.spacemouse.load_settings(prefs);
         }

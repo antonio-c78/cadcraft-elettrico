@@ -51,6 +51,26 @@ fn selection(app: &CadApp) -> Vec<(Handle, Kind)> {
 }
 
 pub(crate) fn entries(app: &CadApp) -> Vec<Entry> {
+    let picked = app.session.selection();
+    if picked.len() == 1
+        && picked.first().is_some_and(|h| {
+            app.session
+                .doc()
+                .ok()
+                .and_then(|d| d.entity(*h))
+                .is_some_and(|e| e.common.xdata.iter().any(|t| t.code == 1001 && t.value == "CC_UNIFILARE_DEVICE"))
+        })
+    {
+        return vec![Entry::Sub {
+            label: "Elettrico".into(),
+            children: vec![Entry::Item {
+                label: "Modifica apparecchio...".into(),
+                id: "ui.elettrico.unifilar.edit".into(),
+                shortcut: None,
+                enabled: app.session.running.is_none(),
+            }],
+        }];
+    }
     let selected = selection(app);
     if selected.is_empty() || selected.len() != app.session.selection().len() {
         return vec![];

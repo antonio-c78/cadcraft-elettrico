@@ -14,7 +14,7 @@ mod edit;
 mod layers;
 pub mod rooms;
 mod symbol;
-mod unifilar;
+pub mod unifilar;
 
 #[derive(Clone, Deserialize, Serialize)]
 pub struct Component {

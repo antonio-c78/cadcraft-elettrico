@@ -13,6 +13,7 @@ mod preview;
 mod rooms;
 mod symbol;
 mod unifilar;
+mod unifilar_browser;
 
 fn catalog_environment() -> Option<String> {
     #[cfg(not(target_arch = "wasm32"))]
@@ -49,6 +50,7 @@ pub struct State {
     context: context::State,
     calibration: calibration::State,
     unifilar: unifilar::State,
+    unifilar_browser: unifilar_browser::State,
 }
 
 impl Default for State {
@@ -77,6 +79,7 @@ impl Default for State {
             context: context::State::default(),
             calibration: calibration::State::default(),
             unifilar: unifilar::State::default(),
+            unifilar_browser: unifilar_browser::State::default(),
         }
     }
 }
@@ -110,6 +113,9 @@ impl State {
 }
 
 pub fn route(app: &mut CadApp, id: &str, params: &Value) -> Option<Result<Value, String>> {
+    if matches!(id, "ui.elettrico.unifilar.symbols" | "ui.elettrico.unifilar.edit") {
+        return Some(unifilar_browser::command(app, id, params));
+    }
     if id == "ui.elettrico.unifilar.new" {
         return Some(unifilar::command(app, params));
     }
@@ -220,6 +226,7 @@ pub fn route(app: &mut CadApp, id: &str, params: &Value) -> Option<Result<Value,
 
 pub fn show(app: &mut CadApp, ctx: &egui::Context) {
     unifilar::show(app, ctx);
+    unifilar_browser::show(app, ctx);
     calibration::show(app, ctx);
     context::show(app, ctx);
     rooms::show(app, ctx);
@@ -705,6 +712,18 @@ fn placement_window(app: &mut CadApp, ctx: &egui::Context) {
         if app.session.running.is_none() && !editing && !single {
             app.elettrico.open = true;
         }
+    }
+}
+
+pub(crate) fn unifilar_preferences(state: &State) -> Value {
+    json!(state.unifilar_browser.favorites)
+}
+pub(crate) fn load_unifilar_preferences(state: &mut State, value: &Value) {
+    if let Ok(favorites) = serde_json::from_value::<std::collections::BTreeSet<String>>(value.clone())
+        && favorites.len() <= 512
+        && favorites.iter().all(|s| s.len() <= 255)
+    {
+        state.unifilar_browser.favorites = favorites;
     }
 }
 

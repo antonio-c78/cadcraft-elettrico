@@ -1,6 +1,9 @@
 //! A new unifilar drawing is fully validated before it becomes an independent unsaved tab.
 use super::*;
 use std::collections::{BTreeMap, BTreeSet};
+pub mod placement;
+mod schema;
+pub use schema::Cell;
 const CMD: &str = "electrical.unifilar.new";
 
 #[derive(Deserialize)]
@@ -21,11 +24,13 @@ struct Field {
     text_height_mm: f64,
 }
 pub(super) fn specs() -> Vec<CommandSpec> {
-    vec![
+    let mut commands = vec![
         CommandSpec::new(CMD, "New electrical unifilar drawing", create)
             .noundo()
             .params("{model: path_to_modello.json, fields?:{impresa,recapiti,cliente,indirizzo,quadro,titolo,data,revisione,progetto,foglio}}"),
-    ]
+    ];
+    commands.extend(placement::specs());
+    commands
 }
 #[cfg(not(target_arch = "wasm32"))]
 fn read(path: &std::path::Path, limit: u64) -> Result<Vec<u8>> {
@@ -48,7 +53,9 @@ fn create(s: &mut Session, p: &Value) -> Result<Value> {
     }
     let path = p["model"].as_str().filter(|p| !p.is_empty() && p.len() <= 32768).ok_or_else(|| bad(CMD, "Indica il modello esterno."))?;
     let model_path = std::path::Path::new(path);
-    let model: Model = serde_json::from_slice(&read(model_path, 524288)?).map_err(|e| bad(CMD, e.to_string()))?;
+    let model_bytes = read(model_path, 524288)?;
+    let raw_model: Value = serde_json::from_slice(&model_bytes).map_err(|e| bad(CMD, e.to_string()))?;
+    let model: Model = serde_json::from_slice(&model_bytes).map_err(|e| bad(CMD, e.to_string()))?;
     if model.format != "cadcraft-unifilar-template"
         || model.version != 1
         || model.units != "mm"
@@ -136,6 +143,11 @@ fn create(s: &mut Session, p: &Value) -> Result<Value> {
         a.text.rotation = 0.0;
         a.text.halign = HAlign::Left;
         a.text.valign = VAlign::Baseline;
+    }
+    if raw_model.get("columns").is_some() {
+        let layout: schema::Layout = serde_json::from_value(raw_model.clone()).map_err(|e| bad(CMD, e.to_string()))?;
+        schema::validate(&layout)?;
+        placement::tags(&mut entity.common, "CC_UNIFILARE_LAYOUT", &schema::snapshot(&layout)?);
     }
     let baseline = Arc::new(drawing.clone());
     drawing.modify_entity(handle, |e| *e = entity)?;

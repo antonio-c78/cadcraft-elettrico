@@ -17,7 +17,7 @@ const FIELDS: [(&str, &str); 10] = [
 #[derive(Default)]
 pub(super) struct State {
     open: bool,
-    model: String,
+    pub(super) model: String,
     fields: std::collections::BTreeMap<String, String>,
     error: Option<String>,
 }
