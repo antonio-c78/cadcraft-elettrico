@@ -667,16 +667,25 @@ fn draw_grid(app: &CadApp, p: &egui::Painter, xf: &Xf) {
         let major_n = f64::from(s.gridmajor.max(1));
         let unit = if s.gridunit.x == 0.0 { s.snapunit.x } else { s.gridunit.x };
         let minor = adaptive(unit, xf.scale, 8.0);
-        let major = minor * major_n;
+        let unit_y = if s.gridunit.y == 0.0 { s.snapunit.y } else { s.gridunit.y };
+        let minor_y = adaptive(unit_y, xf.scale, 8.0);
+        let origin = app
+            .session
+            .state()
+            .ok()
+            .filter(|st| st.block_edit.is_none() && app.session.space() == cadcraft_engine::doc::Space::Model)
+            .and_then(|st| st.unifilar_grid)
+            .map(|g| g.origin)
+            .unwrap_or(Vec2::ZERO);
         let mut lines = Vec::new();
-        let x0 = (wb.min.x / minor).floor() as i64;
-        let x1 = (wb.max.x / minor).ceil() as i64;
-        let y0 = (wb.min.y / minor).floor() as i64;
-        let y1 = (wb.max.y / minor).ceil() as i64;
+        let x0 = ((wb.min.x - origin.x) / minor).floor() as i64;
+        let x1 = ((wb.max.x - origin.x) / minor).ceil() as i64;
+        let y0 = ((wb.min.y - origin.y) / minor_y).floor() as i64;
+        let y1 = ((wb.max.y - origin.y) / minor_y).ceil() as i64;
         if (x1 - x0) < 2000 && (y1 - y0) < 2000 {
             for i in x0..=x1 {
-                let x = i as f64 * minor;
-                let is_major = (x / major).round() * major - x == 0.0 || ((x / major) - (x / major).round()).abs() < 1e-6;
+                let x = origin.x + i as f64 * minor;
+                let is_major = i % major_n as i64 == 0;
                 let sx = xf.to_screen(Vec2::new(x, 0.0)).x;
                 lines.push(Shape::line_segment(
                     [pos2(sx, xf.rect.top()), pos2(sx, xf.rect.bottom())],
@@ -684,8 +693,8 @@ fn draw_grid(app: &CadApp, p: &egui::Painter, xf: &Xf) {
                 ));
             }
             for j in y0..=y1 {
-                let y = j as f64 * minor;
-                let is_major = ((y / major) - (y / major).round()).abs() < 1e-6;
+                let y = origin.y + j as f64 * minor_y;
+                let is_major = j % major_n as i64 == 0;
                 let sy = xf.to_screen(Vec2::new(0.0, y)).y;
                 lines.push(Shape::line_segment(
                     [pos2(xf.rect.left(), sy), pos2(xf.rect.right(), sy)],

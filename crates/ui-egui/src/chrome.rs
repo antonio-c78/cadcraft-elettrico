@@ -370,7 +370,7 @@ pub fn status_bar(app: &mut CadApp, ui: &mut egui::Ui) {
         }
         x = x.max(r.left() + if app.ui.show_toolsets { 232.0 } else { 60.0 });
         // Right side: toggles, right-aligned.
-        let s = app.session.settings.clone();
+        let s = app.session.drafting_settings();
         let anno_all = app.session.doc().is_ok_and(|d| d.anno_all_visible());
         use cadcraft_engine::snap::mode;
         let toggles: Vec<(Icon, bool, &str, &str)> = vec![

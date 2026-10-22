@@ -23,12 +23,17 @@ pub fn specs() -> Vec<CommandSpec> {
             .enabled(always)
             .noundo()
             .transparent(),
-        CommandSpec::new("grid", "Grid Display", |s, p| toggle(s, p, |st| &mut st.gridmode, "Grid"))
-            .key("F7")
-            .params("{on?: bool}")
-            .enabled(always)
-            .noundo()
-            .transparent(),
+        CommandSpec::new("grid", "Grid Display", |s, p| {
+            let on = p.get("on").and_then(Value::as_bool).unwrap_or(!s.drafting_settings().gridmode);
+            crate::sysvars::set(s, "GRIDMODE", &json!(on))?;
+            s.touch();
+            Ok(json!({"on":on,"message":format!("<Grid {}>",if on {"on"} else {"off"})}))
+        })
+        .key("F7")
+        .params("{on?: bool}")
+        .enabled(always)
+        .noundo()
+        .transparent(),
         CommandSpec::new("snap", "Snap Mode", |s, p| toggle(s, p, |st| &mut st.snapmode, "Snap"))
             .key("F9")
             .params("{on?: bool}")

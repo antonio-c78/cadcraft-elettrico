@@ -6,6 +6,56 @@ mod schema;
 pub use schema::Cell;
 const CMD: &str = "electrical.unifilar.new";
 
+/// View-only settings: opening a sheet never rewrites its drawing or the user's profile.
+#[derive(Clone, Copy, Debug)]
+pub struct Grid {
+    pub origin: Vec2,
+    pub spacing: Vec2,
+    pub visible: bool,
+}
+pub(crate) fn drawing_grid(d: &cadcraft_doc::Drawing) -> Option<Grid> {
+    if d.header.i64("INSUNITS", 0) != 4 || d.entity_count() > 10000 {
+        return None;
+    }
+    let mut refs = d.model.iter().filter(|e| e.common.xdata.iter().any(|t| t.code == 1001 && t.value == "CC_UNIFILARE_MODELO"));
+    let e = refs.next()?;
+    if refs.next().is_some() {
+        return None;
+    }
+    let EntityKind::Insert(i) = &e.kind else { return None };
+    if i.insert != Vec3::ZERO || i.rotation != 0.0 || i.scale != Vec3::new(1.0, 1.0, 1.0) {
+        return None;
+    }
+    let (left, step) = if let Some(raw) = placement::data(e, "CC_UNIFILARE_LAYOUT").ok()? {
+        let layout = schema::restore(raw).ok()?;
+        let c = layout.columns.first()?;
+        let step = (c.bounds[2] - c.bounds[0]) / 2.0;
+        if layout.columns.iter().any(|v| {
+            ((v.bounds[2] - v.bounds[0]) / 2.0 - step).abs() > 1e-6
+                || (((v.bounds[0] - c.bounds[0]) / step) - ((v.bounds[0] - c.bounds[0]) / step).round()).abs() > 1e-6
+        }) {
+            return None;
+        }
+        (c.bounds[0], step)
+    } else {
+        // Phase-2 sheets precede embedded layouts; only this known model has a fallback.
+        let id = e
+            .common
+            .xdata
+            .iter()
+            .skip_while(|t| t.code != 1001 || t.value != "CC_UNIFILARE_MODELO")
+            .skip(1)
+            .take_while(|t| t.code != 1001)
+            .find(|t| t.code == 1000)?;
+        if id.value != "a3-10col-v1" {
+            return None;
+        }
+        (55.0, 17.75)
+    };
+    let spacing = d.header.grid_unit();
+    Some(Grid { origin: Vec2::new(left, 0.0), spacing: Vec2::new(step, spacing.y), visible: true })
+}
+
 #[derive(Deserialize)]
 struct Model {
     format: String,

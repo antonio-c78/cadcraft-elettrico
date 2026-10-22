@@ -18,7 +18,7 @@ pub struct Draft {
     backup_dir: Option<String>,
     pub error: Option<String>,
 }
-fn data(e: &Entity, app: &str) -> Result<Option<Value>> {
+pub(super) fn data(e: &Entity, app: &str) -> Result<Option<Value>> {
     let mut active = false;
     let mut text = String::new();
     for t in &e.common.xdata {

@@ -22,3 +22,7 @@ Validation: synthetic engine coverage checks failed-creation atomicity, preserva
 Line markers attach to standalone LINE entities inside the drawing area, follow the line's angle and do not reserve a table column. They are annotations, not protective devices. Automatic circuit wiring belongs to the following phase. Stored ports prepare future connections; existing markers/connections do not yet follow generic CAD transforms.
 
 Use the electrical edit form's `Sposta / cambia colonna` to reposition a native device and its table data. Generic MOVE/ROTATE/SCALE on the entire reference also transforms its cell graphics; the electrical reader detects this and asks for Undo. Zoom and pan remain available during guided placement. Right-clicking one native unifilar object exposes its edit form.
+
+## Automatic sheet grid
+
+Opening a recognized unifilar sheet initializes a view-only grid per drawing, including existing phase-2 sheets. Its horizontal origin is the first device column's left edge and its X spacing is half a column (55 mm origin and 17.75 mm spacing in A3 v1). Equal-width, aligned columns are validated from the embedded layout; the known phase-2 model has the same fallback. Y spacing stays as loaded, and snap mode/unit are unchanged. Grid rendering honors independent X/Y spacing. F7 and Drafting Settings control visibility for that sheet without changing a plan drawing's grid. Opening a sheet does not alter drawing entities, dirty state, file bytes or profile settings.

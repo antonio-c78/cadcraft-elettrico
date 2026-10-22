@@ -84,7 +84,7 @@ pub fn get(s: &Session, name: &str) -> Option<Value> {
         // Marker, tooltip and tracking tooltip always on (1 + 4 + 32); polar 8, tracking 16.
         "AUTOSNAP" => json!(37 + 8 * u32::from(st.polarmode) + 16 * u32::from(st.otrack)),
         "POLARANG" => json!(st.polarang.to_degrees()),
-        "GRIDMODE" => json!(i32::from(st.gridmode)),
+        "GRIDMODE" => json!(i32::from(s.drafting_settings().gridmode)),
         "SNAPMODE" => json!(i32::from(st.snapmode)),
         "SNAPSTYL" => json!(i32::from(st.isodraft)),
         "SNAPISOPAIR" => json!(st.isoplane.index()),
@@ -245,7 +245,16 @@ pub fn set(s: &mut Session, name: &str, v: &Value) -> Result<()> {
         }
         "QNEWTEMPLATE" => crate::cmd::file::set_qnew_template(v.as_str().ok_or_else(bad)?),
         "POLARANG" => st.polarang = as_f64(v).filter(|a| *a > 0.0).ok_or_else(bad)?.to_radians(),
-        "GRIDMODE" => st.gridmode = as_bool(v).ok_or_else(bad)?,
+        "GRIDMODE" => {
+            let visible = as_bool(v).ok_or_else(bad)?;
+            if let Ok(state) = s.state_mut()
+                && let Some(grid) = &mut state.unifilar_grid
+            {
+                grid.visible = visible;
+            } else {
+                s.settings.gridmode = visible;
+            }
+        }
         "SNAPMODE" => st.snapmode = as_bool(v).ok_or_else(bad)?,
         "SNAPSTYL" => st.isodraft = as_i(v).filter(|b| (0..=1).contains(b)).ok_or_else(bad)? == 1,
         "SNAPISOPAIR" => st.isoplane = as_i(v).and_then(crate::snap::iso::IsoPlane::from_index).ok_or_else(bad)?,
@@ -254,6 +263,11 @@ pub fn set(s: &mut Session, name: &str, v: &Value) -> Result<()> {
                 .filter(|p| p.is_finite() && if n == "GRIDUNIT" { p.x >= 0.0 && p.y >= 0.0 } else { p.x > 0.0 && p.y > 0.0 })
                 .ok_or_else(bad)?;
             s.doc_mut()?.header.set(&n, cadcraft_doc::HVal::Point(unit.to3(0.0)));
+            if n == "GRIDUNIT"
+                && let Some(grid) = &mut s.state_mut()?.unifilar_grid
+            {
+                grid.spacing = unit;
+            }
         }
         "GRIDMAJOR" => st.gridmajor = as_f64(v).ok_or_else(bad)?.clamp(1.0, 100.0) as u32,
         "DYNDIGRIP" => st.dyndigrip = as_i(v).filter(|i| (0..=31).contains(i)).and_then(|i| u32::try_from(i).ok()).ok_or_else(bad)?,

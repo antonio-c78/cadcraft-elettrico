@@ -118,6 +118,7 @@ pub struct Snapshot {
 /// One open drawing.
 #[derive(Clone, Debug)]
 pub struct DocState {
+    pub unifilar_grid: Option<cmd::electrical::unifilar::Grid>,
     pub doc: Arc<Drawing>,
     pub undo: Vec<Snapshot>,
     pub redo: Vec<Snapshot>,
@@ -148,8 +149,10 @@ static NEXT_UID: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::ne
 
 impl DocState {
     pub fn new(doc: Drawing, title: &str, path: Option<String>) -> Self {
+        let unifilar_grid = cmd::electrical::unifilar::drawing_grid(&doc);
         let doc = Arc::new(doc);
         DocState {
+            unifilar_grid,
             saved: doc.clone(),
             doc,
             undo: Vec::new(),
@@ -794,6 +797,15 @@ impl Session {
         if let Ok(d) = self.doc() {
             settings.snapunit = d.header.snap_unit();
             settings.gridunit = d.header.grid_unit();
+        }
+        if let Ok(st) = self.state()
+            && let Some(grid) = st.unifilar_grid
+            && self.space() == Space::Model
+            && st.block_edit.is_none()
+        {
+            settings.gridunit = grid.spacing;
+            settings.gridmode = grid.visible;
+            settings.isodraft = false;
         }
         settings
     }

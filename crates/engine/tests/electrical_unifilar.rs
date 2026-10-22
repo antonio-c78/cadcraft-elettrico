@@ -253,3 +253,53 @@ fn unifilar_placement_owns_column_data_is_atomic_and_markers_do_not_occupy_colum
     let _ = Vec2::ZERO;
     std::fs::remove_dir_all(root).unwrap();
 }
+
+#[test]
+fn opening_unifilar_aligns_half_columns_without_changing_files_or_plan_settings() {
+    use cadcraft_engine::geom::Vec2;
+    let mut setup = Session::empty();
+    let mut d = Drawing::new_metric();
+    d.blocks.insert("TITLE".into(), Arc::new(Block::new("TITLE")));
+    setup.open_drawing(d, "template", None);
+    let r = setup.execute("insert", &json!({"name":"TITLE","at":[0,0]})).unwrap();
+    let h = cadcraft_engine::doc::Handle::parse_hex(r["handle"].as_str().unwrap()).unwrap();
+    setup
+        .doc_mut()
+        .unwrap()
+        .modify_entity(h, |e| {
+            e.common.xdata = vec![RawTag { code: 1001, value: "CC_UNIFILARE_MODELO".into() }, RawTag { code: 1000, value: "a3-10col-v1".into() }];
+        })
+        .unwrap();
+    let bytes = cadcraft_io::write(setup.doc().unwrap(), "sheet.dxf").unwrap();
+    let sheet = cadcraft_io::read(&bytes, "sheet.dxf").unwrap();
+    let mut s = Session::empty();
+    s.settings.gridmode = false;
+    let plan = s.open_drawing(Drawing::new_metric(), "Plan", None);
+    let plan_settings = s.drafting_settings();
+    let index = s.open_drawing(sheet, "Unifilar", None);
+    let original = s.state().unwrap().doc.clone();
+    assert!(!s.state().unwrap().is_dirty());
+    let grid = s.state().unwrap().unifilar_grid.unwrap();
+    assert_eq!(grid.origin, Vec2::new(55.0, 0.0));
+    assert_eq!(s.drafting_settings().gridunit.x, 17.75);
+    assert!(s.drafting_settings().gridmode);
+    for i in 0..10 {
+        let left = 55.0 + i as f64 * 35.5;
+        assert_eq!(grid.origin.x + (i * 2) as f64 * grid.spacing.x, left);
+        assert_eq!(grid.origin.x + (i * 2 + 1) as f64 * grid.spacing.x, left + 17.75);
+    }
+    s.execute("grid", &json!({})).unwrap();
+    assert!(!s.drafting_settings().gridmode);
+    s.execute("grid", &json!({})).unwrap();
+    assert!(s.drafting_settings().gridmode);
+    assert!(Arc::ptr_eq(&original, &s.state().unwrap().doc));
+    s.active = plan;
+    assert_eq!(s.drafting_settings().gridunit, plan_settings.gridunit);
+    assert_eq!(s.drafting_settings().gridmode, plan_settings.gridmode);
+    s.active = index;
+    assert_eq!(s.drafting_settings().gridunit.x, 17.75);
+    let reopened = cadcraft_io::read(&bytes, "sheet.dxf").unwrap();
+    s.open_drawing(reopened, "Reopened", None);
+    assert_eq!(s.drafting_settings().gridunit.x, 17.75);
+    assert!(!s.state().unwrap().is_dirty());
+}

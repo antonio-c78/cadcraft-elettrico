@@ -41,6 +41,7 @@ pub fn show(app: &mut CadApp, ctx: &egui::Context) {
 fn dsettings(app: &mut CadApp, ctx: &egui::Context, open: &mut bool) {
     let settings = app.session.drafting_settings();
     let (mut snapunit, mut gridunit) = (settings.snapunit, settings.gridunit);
+    let mut gridmode = settings.gridmode;
     egui::Window::new(crate::tl!("Drafting Settings")).id(egui::Id::new("Drafting Settings")).open(open).resizable(false).show(ctx, |ui| {
         let s = &mut app.session.settings;
         ui.heading(crate::tl!("Snap and Grid"));
@@ -68,7 +69,7 @@ fn dsettings(app: &mut CadApp, ctx: &egui::Context, open: &mut bool) {
                 ui.add(egui::DragValue::new(&mut s.polardist).speed(0.05).range(0.0..=1e6));
             });
         });
-        ui.checkbox(&mut s.gridmode, crate::tl!("Grid On (F7)"));
+        ui.checkbox(&mut gridmode, crate::tl!("Grid On (F7)"));
         ui.horizontal(|ui| {
             ui.label(crate::tl!("Grid spacing"));
             ui.add(egui::DragValue::new(&mut gridunit.x).speed(0.05).range(0.0..=1e6).clamp_existing_to_range(false));
@@ -135,6 +136,9 @@ fn dsettings(app: &mut CadApp, ctx: &egui::Context, open: &mut bool) {
         ui.checkbox(&mut s.orthomode, crate::tl!("Ortho (F8)"));
     });
     // Drawing edits go through the same command as the CLI, including dirty state and undo.
+    if gridmode != settings.gridmode {
+        let _ = app.run("setvar", json!({"name":"GRIDMODE","value":gridmode}));
+    }
     for (name, before, after) in [("SNAPUNIT", settings.snapunit, snapunit), ("GRIDUNIT", settings.gridunit, gridunit)] {
         if before != after {
             let _ = app.run("setvar", json!({ "name": name, "value": [after.x, after.y] }));
