@@ -67,6 +67,9 @@ pub(super) fn show(app: &mut CadApp, ctx: &egui::Context) {
                     let y = if d.phase == 2 { app.canvas.cursor.map(|p| p.y).unwrap_or(d.link.y) } else { d.link.y };
                     ui.label(format!("Altezza percorso: {y:.2} mm · scatto verticale F9"));
                 }
+                if let Some(x) = d.proposed_vertical_x() {
+                    ui.label(format!("Passaggio verticale proposto: X {x:.2} mm"));
+                }
                 if let Some(error) = &d.error {
                     ui.colored_label(ui.visuals().error_fg_color, error);
                 }
@@ -82,12 +85,18 @@ pub(super) fn show(app: &mut CadApp, ctx: &egui::Context) {
                         if matches!(d.link.kind.as_str(), "series" | "branch") && ui.button("Cambia arrivo").clicked() {
                             action = Some("Destinazione");
                         }
-                        if d.link.kind != "pe" && ui.button("Cambia percorso").clicked() {
+                        if d.link.kind != "pe" && ui.button(if d.link.kind == "bus" { "Cambia percorso" } else { "Cambia altezza" }).clicked() {
                             action = Some("Percorso");
+                        }
+                        if d.proposed_vertical_x().is_some() && ui.button("Cambia passaggio verticale").clicked() {
+                            action = Some("Verticale");
                         }
                     }
                 });
                 ui.horizontal(|ui| {
+                    if d.phase == 5 && ui.button("Mantieni posizione proposta").clicked() {
+                        action = Some("");
+                    }
                     if ui
                         .add_enabled(
                             d.phase == 3 && d.error.is_none(),

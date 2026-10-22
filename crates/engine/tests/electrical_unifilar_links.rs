@@ -215,3 +215,42 @@ fn guided_bus_requires_confirmation_and_cancel_is_clean() {
     assert!(f.s.execute("electrical.unifilar.link.insert", &json!({"model":f.model,"link":link,"backup_dir":bad})).is_err());
     assert!(Arc::ptr_eq(&before, &f.s.state().unwrap().doc));
 }
+
+#[test]
+fn series_vertical_pass_defaults_to_midpoint_and_can_be_overridden() {
+    use cadcraft_engine::{Input, geom::Vec2};
+    let mut f = fixture();
+    let before = f.s.state().unwrap().doc.clone();
+    f.s.execute("electrical.unifilar.link.prepare", &json!({"model":f.model,"kind":"series","backup_dir":f.root})).unwrap();
+    f.s.start("electrical.unifilar.link.place").unwrap();
+    f.s.input(Input::Point(Vec2::new(62.5, 238.))).unwrap();
+    f.s.input(Input::Point(Vec2::new(97.5, 250.))).unwrap();
+    f.s.input(Input::Point(Vec2::new(10., 200.))).unwrap();
+    assert_eq!(f.s.unifilar_link.as_ref().unwrap().phase, 5);
+    assert_eq!(f.s.unifilar_link.as_ref().unwrap().proposed_vertical_x(), Some(80.));
+    assert!(Arc::ptr_eq(&before, &f.s.state().unwrap().doc));
+    // A fourth click cannot force a vertical line through the destination body.
+    let _ = f.s.input(Input::Point(Vec2::new(97.5, 200.)));
+    assert_eq!(f.s.unifilar_link.as_ref().unwrap().phase, 5);
+    assert!(f.s.unifilar_link.as_ref().unwrap().error.is_some());
+    f.s.input(Input::Enter).unwrap();
+    assert_eq!(f.s.unifilar_link.as_ref().unwrap().phase, 3);
+    assert!(Arc::ptr_eq(&before, &f.s.state().unwrap().doc));
+    f.s.input(Input::Enter).unwrap();
+    let h = f.s.doc().unwrap().model.iter().find(|e| e.common.xdata.iter().any(|t| t.code == 1001 && t.value == "CC_UNIFILARE_LINK")).unwrap().handle;
+    let path = f.path(&json!(h.hex()));
+    assert!(path.windows(2).any(|p| p[0] == [80., 200.] && p[1] == [80., 252.]));
+    f.s.execute("electrical.unifilar.link.prepare", &json!({"model":f.model,"handle":h.hex(),"backup_dir":f.root})).unwrap();
+    f.s.start("electrical.unifilar.link.place").unwrap();
+    f.s.input(Input::Keyword("Verticale".into())).unwrap();
+    f.s.input(Input::Point(Vec2::new(75., 100.))).unwrap();
+    assert_eq!(f.s.unifilar_link.as_ref().unwrap().phase, 3);
+    f.s.input(Input::Enter).unwrap();
+    assert!(f.path(&json!(h.hex())).windows(2).any(|p| p[0] == [75., 200.] && p[1] == [75., 252.]));
+    let bytes = cadcraft_io::write(f.s.doc().unwrap(), "roundtrip.dxf").unwrap();
+    let mut reopened = Session::empty();
+    reopened.open_drawing(cadcraft_io::read(&bytes, "roundtrip.dxf").unwrap(), "reopened", None);
+    assert_eq!(reopened.execute("electrical.unifilar.link.read", &json!({"handle":h.hex()})).unwrap()["link"]["vertical_x"], 75.);
+    f.s.execute("u", &json!({})).unwrap();
+    assert!(f.s.execute("electrical.unifilar.link.read", &json!({"handle":h.hex()})).unwrap()["link"]["vertical_x"].is_null());
+}

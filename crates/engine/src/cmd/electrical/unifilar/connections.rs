@@ -21,6 +21,8 @@ pub struct Link {
     pub bus: Option<String>,
     pub span: Option<[f64; 2]>,
     pub y: f64,
+    #[serde(default)]
+    pub vertical_x: Option<f64>,
 }
 #[derive(Clone)]
 pub struct Draft {
@@ -34,8 +36,12 @@ pub struct Draft {
     backup_dir: Option<String>,
     env: Arc<Env>,
     cache: PreviewCache,
+    vertical_anchor: Option<f64>,
 }
 impl Draft {
+    pub fn proposed_vertical_x(&self) -> Option<f64> {
+        self.link.vertical_x.or_else(|| vertical_default(self).ok().flatten())
+    }
     pub fn description(&self) -> String {
         describe(&self.link, &self.baseline)
     }
@@ -44,6 +50,7 @@ impl Draft {
             return "Controlla l'anteprima, poi conferma. Puoi tornare indietro.";
         }
         match (self.link.kind.as_str(), self.phase) {
+            (_, 5) => "Scegli il passaggio verticale: al centro fra le colonne, oppure spostalo con il mouse. Invio mantiene il valore proposto.",
             ("branch", 0) => "Scegli la barra comune a cui collegare la derivazione.",
             ("pe", 0) => "Scegli il punto PE del simbolo (cerchio evidenziato).",
             (_, 0) => "Scegli l'uscita del simbolo di partenza (cerchio evidenziato).",
@@ -104,6 +111,7 @@ pub(super) fn read_link(d: &Drawing, h: Handle) -> Result<Link> {
         || !["series", "bus", "branch", "pe"].contains(&link.kind.as_str())
         || !link.y.is_finite()
         || link.y.abs() > 1000.0
+        || link.vertical_x.is_some_and(|x| !x.is_finite() || x.abs() > 1000.0)
         || link.span.is_some_and(|s| s.iter().any(|v| !v.is_finite() || v.abs() > 1000.0))
         || [link.from.as_ref(), link.to.as_ref()].into_iter().flatten().any(|p| p.handle.len() > 32 || p.port.len() > 64)
         || link.bus.as_ref().is_some_and(|s| s.len() > 32)
@@ -268,7 +276,25 @@ impl Env {
             .filter(|(h, _, _)| self.links.get(h).and_then(|l| net(l, &self.links).ok()).as_ref() != Some(&root))
             .map(|(_, a, b)| (*a, *b))
             .collect();
-        routing::route(a, b, y, area, &boxes, &lanes, &wires)
+        if matches!(link.kind.as_str(), "series" | "branch") && (a.x - b.x).abs() > 1e-7 {
+            let x = link.vertical_x.unwrap_or((a.x + b.x) * 0.5);
+            let corner = Vec2::new(x, y);
+            let top = Vec2::new(x, b.y);
+            if !x.is_finite()
+                || x < area[0]
+                || x > area[2]
+                || routing::blocked(corner, top, &boxes)
+                || routing::blocked(top, b, &boxes)
+                || wires.iter().any(|(c, d)| routing::overlaps_wire(corner, top, *c, *d) || routing::overlaps_wire(top, b, *c, *d))
+            {
+                return Err(err("Passaggio verticale non disponibile: spostalo oppure cambia altezza."));
+            }
+            let mut path = routing::route(a, corner, y, area, &boxes, &lanes, &wires)?;
+            path.extend([top, b]);
+            Ok(routing::simplify(path))
+        } else {
+            routing::route(a, b, y, area, &boxes, &lanes, &wires)
+        }
     }
     fn geometry(&self, l: &Link) -> Result<(Vec<EntityKind>, Vec<Vec2>)> {
         let from = || l.from.as_ref().ok_or_else(|| err("Scegli il simbolo di partenza."));
@@ -550,7 +576,16 @@ fn prepare(s: &mut Session, p: &Value) -> Result<Value> {
     let mut l = if let Some(h) = target {
         read_link(s.doc()?, h)?
     } else {
-        Link { version: 1, kind: p["kind"].as_str().unwrap_or("series").into(), from: None, to: None, bus: None, span: None, y: 262.5 }
+        Link {
+            version: 1,
+            kind: p["kind"].as_str().unwrap_or("series").into(),
+            from: None,
+            to: None,
+            bus: None,
+            span: None,
+            y: 262.5,
+            vertical_x: None,
+        }
     };
     if let Some(raw) = p.get("link") {
         if raw.to_string().len() > 4096 {
@@ -558,7 +593,11 @@ fn prepare(s: &mut Session, p: &Value) -> Result<Value> {
         }
         l = serde_json::from_value(raw.clone()).map_err(|_| err("Dati del collegamento non validi."))?;
     }
-    if !["series", "bus", "branch", "pe"].contains(&l.kind.as_str()) || l.version != 1 || !l.y.is_finite() {
+    if !["series", "bus", "branch", "pe"].contains(&l.kind.as_str())
+        || l.version != 1
+        || !l.y.is_finite()
+        || l.vertical_x.is_some_and(|x| !x.is_finite() || x.abs() > 1000.0)
+    {
         return Err(err("Tipo di collegamento non valido."));
     }
     if let Some(h) = target {
@@ -612,6 +651,7 @@ fn prepare(s: &mut Session, p: &Value) -> Result<Value> {
         backup_dir,
         env,
         cache: Arc::new(Mutex::new(None)),
+        vertical_anchor: None,
     });
     Ok(json!({"prepared":true}))
 }
@@ -791,6 +831,20 @@ fn point(d: &mut Draft, p: Vec2) -> Result<()> {
         }
         let mut l = d.link.clone();
         l.y = p.y;
+        let offset = vertical_default(d)?;
+        if offset.is_some() {
+            d.link = l;
+            d.vertical_anchor = Some(p.x);
+            d.phase = 5;
+            d.error = None;
+            return Ok(());
+        }
+        let _ = drawing(d, &l)?;
+        d.link = l;
+        d.phase = 3;
+    } else if d.phase == 5 {
+        let mut l = d.link.clone();
+        l.vertical_x = Some(p.x);
         let _ = drawing(d, &l)?;
         d.link = l;
         d.phase = 3;
@@ -807,6 +861,22 @@ fn point(d: &mut Draft, p: Vec2) -> Result<()> {
     }
     d.error = None;
     Ok(())
+}
+fn vertical_default(d: &Draft) -> Result<Option<f64>> {
+    let b = if let Some(to) = &d.link.to {
+        d.env.port(to, "in")?
+    } else {
+        return Ok(None);
+    };
+    let a = if d.link.kind == "series" {
+        d.env.port(d.link.from.as_ref().ok_or_else(|| err("Scegli l'origine."))?, "out")?
+    } else if d.link.kind == "branch" {
+        let (bus, span) = d.env.bus(d.link.bus.as_deref().ok_or_else(|| err("Scegli la barra."))?)?;
+        Vec2::new(b.x.clamp(span[0], span[1]), bus.y)
+    } else {
+        return Ok(None);
+    };
+    Ok(((a.x - b.x).abs() > 1e-7).then_some((a.x + b.x) * 0.5))
 }
 pub(super) fn specs() -> Vec<CommandSpec> {
     vec![
@@ -829,13 +899,21 @@ impl Interactive for Place {
     }
     fn prompt(&self, s: &Session) -> Prompt {
         let text = s.unifilar_link.as_ref().map(|d| d.error.as_deref().unwrap_or(d.instruction())).unwrap_or("Avvia un collegamento.");
-        Prompt::new(text, Accept::POINT).kw(&["Indietro", "Origine", "Destinazione", "Percorso"])
+        Prompt::new(text, Accept::POINT).kw(&["Indietro", "Origine", "Destinazione", "Percorso", "Verticale"])
     }
     fn input(&mut self, s: &mut Session, input: Input) -> Result<Step> {
         match input {
             Input::Cancel => {
                 s.unifilar_link = None;
                 Ok(Step::Cancel)
+            }
+            Input::Enter if current(s)?.phase == 5 => {
+                let mut d = current(s)?.clone();
+                let _ = drawing(&d, &d.link)?;
+                d.phase = 3;
+                d.error = None;
+                s.unifilar_link = Some(d);
+                Ok(Step::Continue)
             }
             Input::Enter => match commit(s) {
                 Ok(r) => {
@@ -859,6 +937,9 @@ impl Interactive for Place {
                     "origine" => 0,
                     "destinazione" if d.link.kind == "series" || d.link.kind == "branch" => 1,
                     "percorso" => 2,
+                    "verticale" if vertical_default(&d)?.is_some() => 5,
+                    _ if d.phase == 5 => 2,
+                    _ if d.phase == 3 && vertical_default(&d)?.is_some() => 5,
                     _ if d.phase == 4 => 2,
                     _ if d.phase == 3 && d.link.kind == "bus" => 4,
                     _ if d.link.kind == "pe" => 0,
@@ -866,6 +947,7 @@ impl Interactive for Place {
                     _ => d.phase.saturating_sub(1),
                 };
                 d.error = None;
+                d.vertical_anchor = None;
                 s.unifilar_link = Some(d);
                 Ok(Step::Continue)
             }
@@ -928,6 +1010,10 @@ impl Interactive for Place {
                 return vec![EntityKind::Circle(cadcraft_doc::Circle { center: cursor.to3(0.0), radius: 0.8 })];
             }
             l.y = cursor.y;
+        } else if d.phase == 5 {
+            if d.vertical_anchor.is_none_or(|x| (x - cursor.x).abs() > 1e-7) {
+                l.vertical_x = Some(cursor.x);
+            }
         } else if d.phase == 4
             && let Some(span) = l.span
         {
