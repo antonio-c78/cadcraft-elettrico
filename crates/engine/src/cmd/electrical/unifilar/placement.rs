@@ -314,18 +314,7 @@ fn candidate(s: &Session, d: &Draft, p: Vec2) -> Result<Candidate> {
         return marker(s, d, p);
     }
     let col = column(d, p)?;
-    let mut axis = col.axis_x + d.symbol.axis_offset_mm;
-    for e in s.doc()?.model.iter() {
-        if let Some(m) = data(e, APP)?
-            && m["kind"] == "device"
-            && m["column"].as_u64() == Some(col.index as u64)
-            && let Some(x) = m["at"][0].as_f64().filter(|x| x.is_finite())
-        {
-            axis = x;
-            break;
-        }
-    }
-    let at = Vec2::new(axis, p.y);
+    let at = Vec2::new(col.axis_x, p.y);
     let mut geometry = d.geometry.clone();
     for k in &mut geometry {
         k.transform(&Mat3::translate(at));

@@ -83,6 +83,11 @@ pub(super) fn local(
         let Some(value) = fields.get(key).filter(|v| !v.trim().is_empty()) else {
             continue;
         };
+        // The catalog's redundant type default need not consume the annotation column.
+        // Keep the value in metadata; explicit model/type variants are still displayed.
+        if key == "tipo" && value.trim().eq_ignore_ascii_case(sym.name.trim()) {
+            continue;
+        }
         let prefix = match key.as_str() {
             "sigla" | "descrizione" | "modello" => "",
             "in_apparecchio" => "In",

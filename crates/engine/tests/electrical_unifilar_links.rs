@@ -117,6 +117,59 @@ impl Drop for Fixture {
     }
 }
 #[test]
+fn symbol_axis_is_always_the_column_center_even_with_legacy_offsets() {
+    let mut f = fixture();
+    let mut model: Value = serde_json::from_slice(&std::fs::read(&f.model).unwrap()).unwrap();
+    model["table"]["rows"].as_array_mut().unwrap().push(json!({"id":"tipo","label":"Tipo"}));
+    for col in model["columns"].as_array_mut().unwrap() {
+        let x = col["bounds"][0].as_f64().unwrap();
+        col["cells"]["tipo"] = json!({"bounds":[x,140.,x+35.,146.],"text_center":[x+17.5,143.],"padding_mm":1.5,"max_lines":1});
+    }
+    std::fs::write(&f.model, model.to_string()).unwrap();
+    let h = Handle::parse_hex(&f.devices[0]).unwrap();
+    let mut old = f.s.execute("electrical.unifilar.read", &json!({"handle":h.hex()})).unwrap();
+    old.as_object_mut().unwrap().retain(|k, _| !["handle", "uid", "revision"].contains(&k.as_str()));
+    old["at"] = json!([22.5, 275.]);
+    f.s.doc_mut()
+        .unwrap()
+        .modify_entity(h, |e| {
+            if let EntityKind::Insert(i) = &mut e.kind {
+                i.insert.x = 22.5;
+            }
+            e.common.xdata = vec![RawTag { code: 1001, value: "CC_UNIFILARE_DEVICE".into() }, RawTag { code: 1000, value: old.to_string() }];
+        })
+        .unwrap();
+    let cat_path = f.root.join("catalogo.json");
+    let mut cat: Value = serde_json::from_slice(&std::fs::read(&cat_path).unwrap()).unwrap();
+    let mut command = cat["symbols"][0].clone();
+    command["id"] = json!("command");
+    command["name"] = json!("Contattore");
+    command["fields"] = json!(["sigla", "tipo"]);
+    command["defaults"] = json!({"tipo":"Contattore"});
+    command["data_position"] = json!("right");
+    command["axis_offset_mm"] = json!(-5.);
+    cat["symbols"].as_array_mut().unwrap().push(command);
+    std::fs::write(&cat_path, cat.to_string()).unwrap();
+    let added = f
+        .s
+        .execute("electrical.unifilar.insert", &json!({"model":f.model,"id":"command","at":[20.,235.],"fields":{"sigla":"KM1"},"backup_dir":f.root}))
+        .unwrap();
+    let read = f.s.execute("electrical.unifilar.read", &json!({"handle":added["handle"]})).unwrap();
+    assert_eq!(read["at"], json!([27.5, 235.]));
+    assert_eq!(read["fields"]["tipo"], "Contattore");
+    assert_eq!(f.s.execute("electrical.unifilar.read", &json!({"handle":h.hex()})).unwrap()["at"], json!([22.5, 275.]));
+    let link = f.link(json!({"version":1,"kind":"series","from":f.port(0,"out"),"to":f.port(1,"in"),"y":262.5}));
+    let mut edit = f.s.execute("electrical.unifilar.read", &json!({"handle":h.hex()})).unwrap();
+    edit["model"] = json!(f.model);
+    edit["backup_dir"] = json!(f.root);
+    f.s.execute("electrical.unifilar.update", &edit).unwrap();
+    assert_eq!(f.s.execute("electrical.unifilar.read", &json!({"handle":h.hex()})).unwrap()["at"], json!([27.5, 275.]));
+    assert_eq!(f.path(&link["handle"]).first().copied(), Some([27.5, 263.]));
+    f.s.execute("u", &json!({})).unwrap();
+    assert_eq!(f.s.execute("electrical.unifilar.read", &json!({"handle":h.hex()})).unwrap()["at"], json!([22.5, 275.]));
+    assert_eq!(f.path(&link["handle"]).first().copied(), Some([22.5, 263.]));
+}
+#[test]
 fn series_parallel_pe_roundtrip_follow_edits_and_undo_atomically() {
     let mut f = fixture();
     let series = json!({"version":1,"kind":"series","from":f.port(0,"out"),"to":f.port(1,"in"),"y":262.5});
