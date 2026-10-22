@@ -1,7 +1,10 @@
 //! A new unifilar drawing is fully validated before it becomes an independent unsaved tab.
 use super::*;
 use std::collections::{BTreeMap, BTreeSet};
+pub mod connections;
+mod markers;
 pub mod placement;
+mod routing;
 mod schema;
 pub use schema::Cell;
 const CMD: &str = "electrical.unifilar.new";
@@ -81,6 +84,7 @@ pub(super) fn specs() -> Vec<CommandSpec> {
             .params("{model: path_to_modello.json, fields?:{impresa,recapiti,cliente,indirizzo,quadro,titolo,data,revisione,progetto,foglio}}"),
     ];
     commands.extend(placement::specs());
+    commands.extend(connections::specs());
     commands
 }
 #[cfg(not(target_arch = "wasm32"))]

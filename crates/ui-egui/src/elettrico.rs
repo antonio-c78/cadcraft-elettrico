@@ -14,6 +14,7 @@ mod rooms;
 mod symbol;
 mod unifilar;
 mod unifilar_browser;
+mod unifilar_connections;
 
 fn catalog_environment() -> Option<String> {
     #[cfg(not(target_arch = "wasm32"))]
@@ -51,6 +52,7 @@ pub struct State {
     calibration: calibration::State,
     unifilar: unifilar::State,
     unifilar_browser: unifilar_browser::State,
+    unifilar_connections: unifilar_connections::State,
 }
 
 impl Default for State {
@@ -80,6 +82,7 @@ impl Default for State {
             calibration: calibration::State::default(),
             unifilar: unifilar::State::default(),
             unifilar_browser: unifilar_browser::State::default(),
+            unifilar_connections: unifilar_connections::State::default(),
         }
     }
 }
@@ -113,6 +116,9 @@ impl State {
 }
 
 pub fn route(app: &mut CadApp, id: &str, params: &Value) -> Option<Result<Value, String>> {
+    if id.starts_with("ui.elettrico.unifilar.link.") {
+        return Some(unifilar_connections::command(app, id, params));
+    }
     if matches!(id, "ui.elettrico.unifilar.symbols" | "ui.elettrico.unifilar.edit") {
         return Some(unifilar_browser::command(app, id, params));
     }
@@ -227,6 +233,7 @@ pub fn route(app: &mut CadApp, id: &str, params: &Value) -> Option<Result<Value,
 pub fn show(app: &mut CadApp, ctx: &egui::Context) {
     unifilar::show(app, ctx);
     unifilar_browser::show(app, ctx);
+    unifilar_connections::show(app, ctx);
     calibration::show(app, ctx);
     context::show(app, ctx);
     rooms::show(app, ctx);

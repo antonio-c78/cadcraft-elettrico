@@ -20,7 +20,7 @@ pub(super) struct State {
     placing: bool,
     error: Option<String>,
 }
-fn path(app: &CadApp) -> String {
+pub(super) fn path(app: &CadApp) -> String {
     if !app.elettrico.unifilar.model.is_empty() {
         return app.elettrico.unifilar.model.clone();
     }
@@ -32,6 +32,9 @@ fn path(app: &CadApp) -> String {
         .and_then(|p| std::path::Path::new(p).parent()?.parent())
         .map(|p| p.join("unifilare/v1/modello.json").to_string_lossy().into_owned())
         .unwrap_or_default()
+}
+pub(super) fn hide(state: &mut State) {
+    state.open = false;
 }
 pub(super) fn command(app: &mut CadApp, id: &str, p: &Value) -> Result<Value, String> {
     if app.session.running.is_some() || app.elettrico.editing.snapshot.is_some() {

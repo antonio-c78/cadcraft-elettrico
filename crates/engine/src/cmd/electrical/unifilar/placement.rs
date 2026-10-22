@@ -264,6 +264,7 @@ struct Candidate {
     label: Option<EntityKind>,
     cells: Vec<EntityKind>,
     line: Option<Handle>,
+    attachment: Option<Value>,
 }
 fn column(d: &Draft, p: Vec2) -> Result<&Column> {
     d.layout.columns.iter().find(|c| p.x >= c.bounds[0] && p.x < c.bounds[2]).ok_or_else(|| bad(CMD, "Scegli una colonna all'interno della tavola."))
@@ -361,36 +362,35 @@ fn candidate(s: &Session, d: &Draft, p: Vec2) -> Result<Candidate> {
             cells.push(text(Vec2::new(cell.text_center[0] - width / 2.0, y - i as f64 * 3.0), value, 2.1));
         }
     }
-    Ok(Candidate { at, column: Some(col.index), geometry, label, cells, line: None })
+    Ok(Candidate { at, column: Some(col.index), geometry, label, cells, line: None, attachment: None })
 }
 fn marker(s: &Session, d: &Draft, p: Vec2) -> Result<Candidate> {
     let mut best = None;
     let mut distance = 2.0;
-    for e in s.doc()?.model.iter() {
-        if let EntityKind::Line(l) = &e.kind {
-            let a = l.a.xy();
-            let b = l.b.xy();
-            let v = b - a;
-            let len = v.len();
-            if !len.is_finite() || len < 1e-6 {
-                continue;
-            }
-            let dir = v / len;
-            let t = ((p - a).dot(dir)).clamp(0.0, len);
-            let at = a + dir * t;
-            let dist = p.dist(at);
-            if dist < distance
-                && at.x > d.layout.drawing_area[0]
-                && at.x < d.layout.drawing_area[2]
-                && at.y > d.layout.columns.first().map(|c| c.symbol_y_range[0]).unwrap_or(d.layout.drawing_area[1])
-                && at.y < d.layout.drawing_area[3]
-            {
-                distance = dist;
-                best = Some((e.handle, at, dir, a, b));
-            }
+    let segments = super::markers::segments(s.doc()?)?;
+    for (index, segment) in segments.iter().enumerate() {
+        let a = segment.a;
+        let b = segment.b;
+        let v = b - a;
+        let len = v.len();
+        if !len.is_finite() || len < 1e-6 {
+            continue;
+        }
+        let dir = v / len;
+        let t = ((p - a).dot(dir)).clamp(0.0, len);
+        let at = a + dir * t;
+        let dist = p.dist(at);
+        if dist < distance
+            && at.x > d.layout.drawing_area[0]
+            && at.x < d.layout.drawing_area[2]
+            && at.y > d.layout.columns.first().map(|c| c.symbol_y_range[0]).unwrap_or(d.layout.drawing_area[1])
+            && at.y < d.layout.drawing_area[3]
+        {
+            distance = dist;
+            best = Some((segment.owner, at, dir, a, b, index));
         }
     }
-    let (handle, at, mut dir, a, b) = best.ok_or_else(|| bad(CMD, "Indica una linea di collegamento nell'area simboli (entro 2 mm)."))?;
+    let (handle, at, mut dir, a, b, index) = best.ok_or_else(|| bad(CMD, "Indica una linea di collegamento nell'area simboli (entro 2 mm)."))?;
     if dir.y < 0.0 || (dir.y.abs() < 1e-8 && dir.x < 0.0) {
         dir = -dir;
     }
@@ -412,7 +412,15 @@ fn marker(s: &Session, d: &Draft, p: Vec2) -> Result<Candidate> {
             }
         }
     }
-    Ok(Candidate { at, column: None, geometry, label: None, cells: vec![], line: Some(handle) })
+    Ok(Candidate {
+        at,
+        column: None,
+        geometry,
+        label: None,
+        cells: vec![],
+        line: Some(handle),
+        attachment: super::markers::attachment(&segments, index, at, angle),
+    })
 }
 fn commit(s: &mut Session, p: Vec2) -> Result<Value> {
     let d = current(s)?.clone();
@@ -447,7 +455,7 @@ fn commit(s: &mut Session, p: Vec2) -> Result<Value> {
     tags(
         &mut common,
         APP,
-        &json!({"version":1,"model":d.layout.id,"symbol":d.symbol.id,"name":d.symbol.name,"kind":d.symbol.kind,"column":c.column,"fields":d.fields,"at":[c.at.x,c.at.y],"ports":d.symbol.ports,"line":c.line.map(|h|h.hex())}),
+        &json!({"version":1,"model":d.layout.id,"symbol":d.symbol.id,"name":d.symbol.name,"kind":d.symbol.kind,"column":c.column,"fields":d.fields,"at":[c.at.x,c.at.y],"ports":d.symbol.ports,"line":c.line.map(|h|h.hex()),"attachment":c.attachment}),
     );
     let kind = EntityKind::Insert(Insert {
         block: name,
@@ -469,6 +477,7 @@ fn commit(s: &mut Session, p: Vec2) -> Result<Value> {
     } else {
         drawing.add(&Space::Model, common, kind)?
     };
+    super::connections::refresh(&mut drawing, &d.layout)?;
     let backup = backup(s.doc()?, d.backup_dir.as_deref())?;
     *s.doc_mut()? = drawing;
     s.unifilar_draft = None;

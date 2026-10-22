@@ -53,23 +53,35 @@ fn selection(app: &CadApp) -> Vec<(Handle, Kind)> {
 pub(crate) fn entries(app: &CadApp) -> Vec<Entry> {
     let picked = app.session.selection();
     if picked.len() == 1
-        && picked.first().is_some_and(|h| {
-            app.session
-                .doc()
-                .ok()
-                .and_then(|d| d.entity(*h))
-                .is_some_and(|e| e.common.xdata.iter().any(|t| t.code == 1001 && t.value == "CC_UNIFILARE_DEVICE"))
-        })
+        && let Some(h) = picked.first()
+        && let Ok(doc) = app.session.doc()
+        && let Some(e) = doc.entity(*h)
     {
-        return vec![Entry::Sub {
-            label: "Elettrico".into(),
-            children: vec![Entry::Item {
-                label: "Modifica apparecchio...".into(),
-                id: "ui.elettrico.unifilar.edit".into(),
-                shortcut: None,
-                enabled: app.session.running.is_none(),
-            }],
-        }];
+        use cadcraft_engine::cmd::electrical::unifilar::connections;
+        let item = |id: &str, label: &str| Entry::Item { label: label.into(), id: id.into(), shortcut: None, enabled: app.session.running.is_none() };
+        let mut children = Vec::new();
+        if e.common.xdata.iter().any(|t| t.code == 1001 && t.value == "CC_UNIFILARE_DEVICE") {
+            children.push(item("ui.elettrico.unifilar.edit", "Modifica apparecchio..."));
+            if connections::has_port(doc, *h, "out") {
+                children.push(item("ui.elettrico.unifilar.link.series", "Collega simboli..."));
+                children.push(item("ui.elettrico.unifilar.link.bus", "Barra di distribuzione..."));
+            }
+            if connections::has_port(doc, *h, "in") {
+                children.push(item("ui.elettrico.unifilar.link.branch", "Derivazione da barra..."));
+            }
+            if connections::has_port(doc, *h, "pe") {
+                children.push(item("ui.elettrico.unifilar.link.pe", "Collega al PE..."));
+            }
+        } else if e.common.xdata.iter().any(|t| t.code == 1001 && t.value == "CC_UNIFILARE_LINK") {
+            children.push(item("ui.elettrico.unifilar.link.edit", "Modifica collegamento..."));
+            if connections::is_bus(doc, *h) {
+                children.push(item("ui.elettrico.unifilar.link.branch", "Derivazione da barra..."));
+            }
+            children.push(item("ui.elettrico.unifilar.link.delete", "Elimina collegamento..."));
+        }
+        if !children.is_empty() {
+            return vec![Entry::Sub { label: "Elettrico".into(), children }];
+        }
     }
     let selected = selection(app);
     if selected.is_empty() || selected.len() != app.session.selection().len() {

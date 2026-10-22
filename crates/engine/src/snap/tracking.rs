@@ -788,6 +788,13 @@ impl crate::Session {
         if !raw.is_finite() {
             return CursorSnap { point: raw, ..Default::default() };
         }
+        if let Some(point) = crate::cmd::electrical::unifilar::connections::snap_port(self, raw, q.aperture) {
+            return CursorSnap {
+                point,
+                snap: Some(super::SnapHit { point, mode: mode::END, name: "Connessione", viewport: None, deferred: None }),
+                ..Default::default()
+            };
+        }
         // Polar angles relative to the last segment when the base point is where it ends.
         let last = self.last_segment.filter(|(_, b)| q.base.is_some_and(|base| base.near(*b, 1e-9 * (1.0 + b.len())))).map(|(a, b)| a.angle_to(b));
         let cfg = TrackConfig::relative_to(&s, angbase, last);
