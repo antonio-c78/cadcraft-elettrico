@@ -27,14 +27,19 @@ fn block(d: &mut Drawing, name: &str) -> Block {
     }
     b
 }
+static FIXTURE_ID: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 fn fixture() -> Fixture {
     set_io(IoHooks {
         read: |b, n| cadcraft_io::read(b, n).map_err(|e| e.to_string()),
         write: |d, n| cadcraft_io::write(d, n).map_err(|e| e.to_string()),
         plot: None,
     });
-    let root = std::env::temp_dir()
-        .join(format!("cadcraft-link-test-{}", std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()));
+    let root = std::env::temp_dir().join(format!(
+        "cadcraft-link-test-{}-{}-{}",
+        std::process::id(),
+        FIXTURE_ID.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
+        std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()
+    ));
     std::fs::create_dir(&root).unwrap();
     let mut library = Drawing::new_metric();
     let b = block(&mut library, "DEVICE");
@@ -436,4 +441,53 @@ fn local_device_data_shares_a_column_and_line_data_owns_only_its_cells() {
     let meta = f.s.execute("electrical.unifilar.read", &json!({"handle":old["handle"]})).unwrap();
     assert!(meta["fields"].get("cavo").is_none());
     assert_eq!(meta["legacy_fields"]["cavo"], "legacy");
+}
+
+#[test]
+fn compact_command_fields_validate_render_and_roundtrip_without_table_rows() {
+    let mut f = fixture();
+    let path = f.root.join("catalogo.json");
+    let mut catalog: Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+    catalog["symbols"].as_array_mut().unwrap().push(json!({
+        "id":"command-compact","name":"Contattore","block":"DEVICE","category":"Comando","kind":"device",
+        "data_position":"right","fields":["sigla","tipo","classe","bobina","bobina_alimentazione","poli","in_apparecchio"],
+        "ports":[{"id":"in","role":"power","position":[0,0,0]},{"id":"out","role":"power","position":[0,-12,0]}]
+    }));
+    std::fs::write(&path, catalog.to_string()).unwrap();
+    let mut p = json!({"model":f.model,"id":"command-compact","at":[27.5,230.],
+        "fields":{"sigla":"KM1","tipo":"CT","classe":"AC-3","bobina":"24","bobina_alimentazione":"DC","poli":"3","in_apparecchio":"16"},"backup_dir":f.root});
+    let before = f.s.state().unwrap().doc.clone();
+    for (key, value) in [("classe", "invalid"), ("bobina_alimentazione", "both"), ("bobina_alimentazione", ""), ("poli", "0"), ("poli", "3P")] {
+        let saved = p["fields"][key].clone();
+        p["fields"][key] = json!(value);
+        assert!(f.s.execute("electrical.unifilar.insert", &p).is_err());
+        assert!(Arc::ptr_eq(&before, &f.s.state().unwrap().doc));
+        p["fields"][key] = saved;
+    }
+    let inserted = f.s.execute("electrical.unifilar.insert", &p).unwrap();
+    let h = Handle::parse_hex(inserted["handle"].as_str().unwrap()).unwrap();
+    let EntityKind::Insert(i) = &f.s.doc().unwrap().entity(h).unwrap().kind else { panic!() };
+    assert_eq!(i.insert.x, 27.5);
+    let b = f.s.doc().unwrap().block(&i.block).unwrap();
+    let texts: Vec<_> = b.entities.iter().filter_map(|e| if let EntityKind::Text(t) = &e.kind { Some(t.value.as_str()) } else { None }).collect();
+    for expected in ["KM1", "CT", "AC-3", "24 V DC", "3P", "In [A] 16"] {
+        assert!(texts.contains(&expected), "{texts:?}");
+    }
+    assert_eq!(b.entities.iter().filter(|e| e.common.layer == "UNI_TESTI" && matches!(e.kind, EntityKind::Line(_))).count(), 6);
+    assert_eq!(texts.len(), 6);
+    let out = json!({"handle":inserted["handle"],"port":"in"});
+    f.link(json!({"version":1,"kind":"series","from":f.port(0,"out"),"to":out,"y":250}));
+    let bytes = cadcraft_io::write(f.s.doc().unwrap(), "roundtrip.dxf").unwrap();
+    let mut reopened = Session::empty();
+    reopened.open_drawing(cadcraft_io::read(&bytes, "roundtrip.dxf").unwrap(), "test", None);
+    let read = reopened.execute("electrical.unifilar.read", &json!({"handle":inserted["handle"]})).unwrap();
+    assert_eq!(read["fields"], p["fields"]);
+    let mut edit = f.s.execute("electrical.unifilar.read", &json!({"handle":inserted["handle"]})).unwrap();
+    edit["model"] = json!(f.model);
+    edit["backup_dir"] = json!(f.root);
+    edit["fields"]["bobina_alimentazione"] = json!("AC");
+    edit["fields"]["bobina"] = json!("230");
+    f.s.execute("electrical.unifilar.update", &edit).unwrap();
+    f.s.execute("undo", &json!({})).unwrap();
+    assert_eq!(f.s.execute("electrical.unifilar.read", &json!({"handle":inserted["handle"]})).unwrap()["fields"]["bobina"], "24");
 }

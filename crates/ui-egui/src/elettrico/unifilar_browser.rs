@@ -122,7 +122,13 @@ fn form(ui: &mut egui::Ui, state: &mut State) -> Option<&'static str> {
             egui::Grid::new("unifilar.device.fields").num_columns(2).spacing([10.0, 6.0]).show(ui, |ui| {
                 if let Some(fields) = symbol["fields"].as_array() {
                     for key in fields.iter().filter_map(Value::as_str) {
-                        let label = if key == "descrizione" && symbol["data_position"].as_str().unwrap_or("table") != "table" {
+                        let command = symbol["category"] == "Comando" && symbol["data_position"] == "right";
+                        if command && key == "bobina_alimentazione" {
+                            continue;
+                        }
+                        let label = if command {
+                            cadcraft_engine::cmd::electrical::unifilar::command_fields::label(key).unwrap_or(key)
+                        } else if key == "descrizione" && symbol["data_position"].as_str().unwrap_or("table") != "table" {
                             "Descrizione"
                         } else if key == "tipo" && symbol["data_position"].as_str().unwrap_or("table") != "table" {
                             "Tipo dispositivo"
@@ -134,10 +140,35 @@ fn form(ui: &mut egui::Ui, state: &mut State) -> Option<&'static str> {
                                 .unwrap_or(key)
                         };
                         ui.label(label);
-                        let v = state.fields.entry(key.into()).or_default();
-                        if key == "descrizione" {
+                        if command && key == "classe" {
+                            let v = state.fields.entry(key.into()).or_default();
+                            egui::ComboBox::from_id_salt("unifilar.command.class")
+                                .selected_text(if v.is_empty() { "Non specificata" } else { v.as_str() })
+                                .width(205.0)
+                                .show_ui(ui, |ui| {
+                                    ui.selectable_value(v, String::new(), "Non specificata");
+                                    for (code, description) in cadcraft_engine::cmd::electrical::unifilar::command_fields::CLASSES {
+                                        ui.selectable_value(v, (*code).into(), format!("{code} · {description}"));
+                                    }
+                                });
+                        } else if command && key == "bobina" {
+                            ui.horizontal(|ui| {
+                                ui.add(egui::TextEdit::singleline(state.fields.entry(key.into()).or_default()).desired_width(95.0).char_limit(32));
+                                let supply = state.fields.entry("bobina_alimentazione".into()).or_default();
+                                egui::ComboBox::from_id_salt("unifilar.command.coil")
+                                    .selected_text(if supply.is_empty() { "AC / DC" } else { supply.as_str() })
+                                    .width(75.0)
+                                    .show_ui(ui, |ui| {
+                                        ui.selectable_value(supply, String::new(), "Non specificata");
+                                        ui.selectable_value(supply, "AC".into(), "AC");
+                                        ui.selectable_value(supply, "DC".into(), "DC");
+                                    });
+                            });
+                        } else if key == "descrizione" {
+                            let v = state.fields.entry(key.into()).or_default();
                             ui.add(egui::TextEdit::multiline(v).desired_rows(3).desired_width(205.0).char_limit(256));
                         } else {
+                            let v = state.fields.entry(key.into()).or_default();
                             ui.add(egui::TextEdit::singleline(v).desired_width(205.0).char_limit(128));
                         }
                         ui.end_row();

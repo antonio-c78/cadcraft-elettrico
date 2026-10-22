@@ -100,7 +100,10 @@ pub(super) fn load(path: &str) -> Result<(Layout, Vec<Symbol>, String)> {
             || sym.axis_offset_mm.abs() > 8.0
             || sym.ports.len() > 16
             || serde_json::to_string(&sym.ports).map_or(true, |s| s.len() > 4096)
-            || sym.fields.iter().any(|f| !layout.table.rows.iter().any(|r| &r.id == f))
+            || sym.fields.iter().any(|f| {
+                !layout.table.rows.iter().any(|r| &r.id == f)
+                    && !(sym.category == "Comando" && sym.data_position == "right" && super::command_fields::label(f).is_some())
+            })
         {
             return Err(bad(CMD, "Attributi del catalogo non validi."));
         }

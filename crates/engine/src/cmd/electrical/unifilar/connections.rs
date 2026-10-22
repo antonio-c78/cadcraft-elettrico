@@ -183,6 +183,15 @@ impl Env {
                                 });
                             }
                         }
+                        EntityKind::Line(l) if part.common.layer == "UNI_TESTI" => {
+                            let a = l.a.xy() + i.insert.xy();
+                            let b = l.b.xy() + i.insert.xy();
+                            env.boxes.push(Obstacle {
+                                owner: e.handle,
+                                body: false,
+                                rect: [a.x.min(b.x) - 0.8, a.y.min(b.y) - 0.8, a.x.max(b.x) + 0.8, a.y.max(b.y) + 0.8],
+                            });
+                        }
                         EntityKind::Line(l) if part.common.layer != "UNI_TESTI" => {
                             bounds = bounds.union(&Bounds2::from_points([l.a.xy() + i.insert.xy(), l.b.xy() + i.insert.xy()]));
                         }

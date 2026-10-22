@@ -2,6 +2,7 @@
 use super::*;
 use std::collections::{BTreeMap, BTreeSet};
 mod annotations;
+pub mod command_fields;
 pub mod connections;
 mod markers;
 pub mod placement;

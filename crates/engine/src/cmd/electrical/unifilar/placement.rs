@@ -207,6 +207,17 @@ pub(super) fn prepare(s: &mut Session, p: &Value) -> Result<Value> {
     {
         return Err(bad(CMD, "Campi del dispositivo non validi."));
     }
+    if symbol.category == "Comando" && symbol.data_position == "right" {
+        if fields.get("classe").is_some_and(|v| !v.is_empty() && !super::command_fields::CLASSES.iter().any(|(code, _)| *code == v))
+            || fields.get("bobina_alimentazione").is_some_and(|v| !["", "AC", "DC"].contains(&v.as_str()))
+            || fields.get("poli").is_some_and(|v| !v.is_empty() && (v.parse::<u16>().is_err() || v.parse::<u16>().is_ok_and(|n| n == 0 || n > 99)))
+        {
+            return Err(bad(CMD, "Controlla classe, alimentazione bobina e numero di poli (1–99)."));
+        }
+        if fields.get("bobina").is_some_and(|v| !v.trim().is_empty()) && fields.get("bobina_alimentazione").is_none_or(|v| v.is_empty()) {
+            return Err(bad(CMD, "Scegli AC o DC per la tensione della bobina."));
+        }
+    }
     if json!([fields, legacy_fields]).to_string().len() > 24000 {
         return Err(bad(CMD, "Troppi dati nel dispositivo. Abbrevia i testi."));
     }

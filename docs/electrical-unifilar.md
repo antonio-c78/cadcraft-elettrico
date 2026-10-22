@@ -50,3 +50,19 @@ The agreed category policies are: Comando excludes cable type, formation and len
 Local text wraps at a fixed readable height; insufficient room, collisions or a long unbreakable code reject insertion rather than silently shrinking text. A local type value that merely repeats the symbol name stays in metadata without consuming annotation space. Native annotations become router obstacles. Table cells have a single data owner per populated field: a second owner is rejected without changing the drawing. Line markers with populated cable data record the column under their insertion point; markers without data retain the legacy column-free behavior. When an attached marker follows a route, its table text stays fixed in that column and remains horizontal.
 
 Existing drawings are not migrated on opening. On explicit edit, fields no longer allowed by the catalog are retained as `legacy_fields` metadata, while the new graphic representation uses the current policy. Drawing backups and a single Undo still cover the whole edit. Synthetic coverage includes four devices in one column, local data placement, overlap rejection, line-cell ownership and DXF persistence.
+
+
+### Compact command annotations
+
+The Comando catalog uses sigla, tipo, classe, bobina (voltage in V),
+bobina_alimentazione (AC or DC), poli and in_apparecchio. These local fields
+need no extra table rows. Class choices follow the categories described by
+[Lovato Academy](https://academy.lovatoelectric.com/faq-items/cosa-si-intende-per-categoria-di-impiego-di-un-contattore/).
+Class and coil supply are independent; neither is guessed. Populated values
+are printed without labels, except `In [A]`; poles gain `P`. The coil has an
+original character-height vector pictogram. Comando annotations use 1.5 mm text
+with 2.4 mm row pitch, retaining the centered symbol and column margins.
+Both text and pictogram reserve
+routing space. Empty fields consume no lines. Old data is retained in
+legacy_fields when an existing device is explicitly edited; opening a drawing
+does not rewrite it. Short editable type defaults fit the centered columns.
