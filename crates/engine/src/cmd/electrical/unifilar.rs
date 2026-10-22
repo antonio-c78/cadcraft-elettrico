@@ -12,6 +12,7 @@ pub struct Grid {
     pub origin: Vec2,
     pub spacing: Vec2,
     pub visible: bool,
+    pub snap_enabled: bool,
 }
 pub(crate) fn drawing_grid(d: &cadcraft_doc::Drawing) -> Option<Grid> {
     if d.header.i64("INSUNITS", 0) != 4 || d.entity_count() > 10000 {
@@ -52,8 +53,8 @@ pub(crate) fn drawing_grid(d: &cadcraft_doc::Drawing) -> Option<Grid> {
         }
         (55.0, 17.75)
     };
-    let spacing = d.header.grid_unit();
-    Some(Grid { origin: Vec2::new(left, 0.0), spacing: Vec2::new(step, spacing.y), visible: true })
+    // Five minor rows form a stable 12.5 mm placement row in the standard profile.
+    Some(Grid { origin: Vec2::new(left, 0.0), spacing: Vec2::new(step, 2.5), visible: true, snap_enabled: true })
 }
 
 #[derive(Deserialize)]

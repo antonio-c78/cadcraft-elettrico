@@ -806,6 +806,9 @@ impl Session {
             settings.gridunit = grid.spacing;
             settings.gridmode = grid.visible;
             settings.isodraft = false;
+            settings.snapmode = grid.snap_enabled;
+            settings.snapunit.y = grid.spacing.y * f64::from(settings.gridmajor.max(1));
+            settings.polarsnap = false;
         }
         settings
     }

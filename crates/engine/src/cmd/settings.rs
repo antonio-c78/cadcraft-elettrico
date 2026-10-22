@@ -34,12 +34,17 @@ pub fn specs() -> Vec<CommandSpec> {
         .enabled(always)
         .noundo()
         .transparent(),
-        CommandSpec::new("snap", "Snap Mode", |s, p| toggle(s, p, |st| &mut st.snapmode, "Snap"))
-            .key("F9")
-            .params("{on?: bool}")
-            .enabled(always)
-            .noundo()
-            .transparent(),
+        CommandSpec::new("snap", "Snap Mode", |s, p| {
+            let on = p.get("on").and_then(Value::as_bool).unwrap_or(!s.drafting_settings().snapmode);
+            crate::sysvars::set(s, "SNAPMODE", &json!(on))?;
+            s.touch();
+            Ok(json!({"on":on,"message":format!("<Snap {}>",if on {"on"} else {"off"})}))
+        })
+        .key("F9")
+        .params("{on?: bool}")
+        .enabled(always)
+        .noundo()
+        .transparent(),
         CommandSpec::new("polar", "Polar Tracking", |s, p| toggle(s, p, |st| &mut st.polarmode, "Polar"))
             .key("F10")
             .params("{on?: bool}")

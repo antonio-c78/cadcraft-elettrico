@@ -784,6 +784,7 @@ impl crate::Session {
         let angbase = self.angle_settings().angbase;
         let Ok(st) = self.state() else { return CursorSnap { point: raw, ..Default::default() } };
         let (doc, space) = (st.doc.clone(), st.edit_space());
+        let sheet_grid = st.unifilar_grid.filter(|_| space == Space::Model && st.block_edit.is_none());
         if !raw.is_finite() {
             return CursorSnap { point: raw, ..Default::default() };
         }
@@ -806,8 +807,13 @@ impl crate::Session {
         let (raw, s) = super::iso::grid_snap(&doc, s, raw);
         let mut p = raw;
         if s.snapmode && !s.polarsnap {
-            let (origin, angle) = super::grid_frame(&doc);
-            p = super::grid_snap(p, doc.header.snap_unit(), origin, angle);
+            if let Some(grid) = sheet_grid {
+                // Only Y is quantized. Exact object snaps above still take precedence.
+                p = super::grid_snap(p, Vec2::new(0.0, s.snapunit.y), grid.origin, 0.0);
+            } else {
+                let (origin, angle) = super::grid_frame(&doc);
+                p = super::grid_snap(p, doc.header.snap_unit(), origin, angle);
+            }
         }
         if let Some(mut t) = self.tracking.track(&doc, &space, p, q.aperture, q.tol, &cfg, q.base) {
             // PolarSnap (SNAPTYPE 1): steps of POLARDIST, or of the snap X spacing when it is 0.

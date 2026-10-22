@@ -669,14 +669,13 @@ fn draw_grid(app: &CadApp, p: &egui::Painter, xf: &Xf) {
         let minor = adaptive(unit, xf.scale, 8.0);
         let unit_y = if s.gridunit.y == 0.0 { s.snapunit.y } else { s.gridunit.y };
         let minor_y = adaptive(unit_y, xf.scale, 8.0);
-        let origin = app
+        let sheet_grid = app
             .session
             .state()
             .ok()
             .filter(|st| st.block_edit.is_none() && app.session.space() == cadcraft_engine::doc::Space::Model)
-            .and_then(|st| st.unifilar_grid)
-            .map(|g| g.origin)
-            .unwrap_or(Vec2::ZERO);
+            .and_then(|st| st.unifilar_grid);
+        let origin = sheet_grid.map(|g| g.origin).unwrap_or(Vec2::ZERO);
         let mut lines = Vec::new();
         let x0 = ((wb.min.x - origin.x) / minor).floor() as i64;
         let x1 = ((wb.max.x - origin.x) / minor).ceil() as i64;
@@ -694,7 +693,8 @@ fn draw_grid(app: &CadApp, p: &egui::Painter, xf: &Xf) {
             }
             for j in y0..=y1 {
                 let y = origin.y + j as f64 * minor_y;
-                let is_major = j % major_n as i64 == 0;
+                let row = (y - origin.y) / (unit_y * major_n);
+                let is_major = if sheet_grid.is_some() { (row - row.round()).abs() < 1e-6 } else { j % major_n as i64 == 0 };
                 let sy = xf.to_screen(Vec2::new(0.0, y)).y;
                 lines.push(Shape::line_segment(
                     [pos2(xf.rect.left(), sy), pos2(xf.rect.right(), sy)],

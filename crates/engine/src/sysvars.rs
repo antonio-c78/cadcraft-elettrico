@@ -85,7 +85,7 @@ pub fn get(s: &Session, name: &str) -> Option<Value> {
         "AUTOSNAP" => json!(37 + 8 * u32::from(st.polarmode) + 16 * u32::from(st.otrack)),
         "POLARANG" => json!(st.polarang.to_degrees()),
         "GRIDMODE" => json!(i32::from(s.drafting_settings().gridmode)),
-        "SNAPMODE" => json!(i32::from(st.snapmode)),
+        "SNAPMODE" => json!(i32::from(s.drafting_settings().snapmode)),
         "SNAPSTYL" => json!(i32::from(st.isodraft)),
         "SNAPISOPAIR" => json!(st.isoplane.index()),
         "SNAPUNIT" | "GRIDUNIT" => {
@@ -255,7 +255,16 @@ pub fn set(s: &mut Session, name: &str, v: &Value) -> Result<()> {
                 s.settings.gridmode = visible;
             }
         }
-        "SNAPMODE" => st.snapmode = as_bool(v).ok_or_else(bad)?,
+        "SNAPMODE" => {
+            let enabled = as_bool(v).ok_or_else(bad)?;
+            if let Ok(state) = s.state_mut()
+                && let Some(grid) = &mut state.unifilar_grid
+            {
+                grid.snap_enabled = enabled;
+            } else {
+                s.settings.snapmode = enabled;
+            }
+        }
         "SNAPSTYL" => st.isodraft = as_i(v).filter(|b| (0..=1).contains(b)).ok_or_else(bad)? == 1,
         "SNAPISOPAIR" => st.isoplane = as_i(v).and_then(crate::snap::iso::IsoPlane::from_index).ok_or_else(bad)?,
         "SNAPUNIT" | "GRIDUNIT" => {
@@ -267,6 +276,12 @@ pub fn set(s: &mut Session, name: &str, v: &Value) -> Result<()> {
                 && let Some(grid) = &mut s.state_mut()?.unifilar_grid
             {
                 grid.spacing = unit;
+            }
+            if n == "SNAPUNIT" {
+                let major = f64::from(s.settings.gridmajor.max(1));
+                if let Some(grid) = &mut s.state_mut()?.unifilar_grid {
+                    grid.spacing.y = unit.y / major;
+                }
             }
         }
         "GRIDMAJOR" => st.gridmajor = as_f64(v).ok_or_else(bad)?.clamp(1.0, 100.0) as u32,

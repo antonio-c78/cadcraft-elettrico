@@ -42,10 +42,11 @@ fn dsettings(app: &mut CadApp, ctx: &egui::Context, open: &mut bool) {
     let settings = app.session.drafting_settings();
     let (mut snapunit, mut gridunit) = (settings.snapunit, settings.gridunit);
     let mut gridmode = settings.gridmode;
+    let mut snapmode = settings.snapmode;
     egui::Window::new(crate::tl!("Drafting Settings")).id(egui::Id::new("Drafting Settings")).open(open).resizable(false).show(ctx, |ui| {
         let s = &mut app.session.settings;
         ui.heading(crate::tl!("Snap and Grid"));
-        ui.checkbox(&mut s.snapmode, crate::tl!("Snap On (F9)"));
+        ui.checkbox(&mut snapmode, crate::tl!("Snap On (F9)"));
         // SNAPSTYL: the isometric snap and grid (ISODRAFT).
         ui.horizontal(|ui| {
             ui.radio_value(&mut s.isodraft, false, crate::tl!("Rectangular snap"));
@@ -136,6 +137,9 @@ fn dsettings(app: &mut CadApp, ctx: &egui::Context, open: &mut bool) {
         ui.checkbox(&mut s.orthomode, crate::tl!("Ortho (F8)"));
     });
     // Drawing edits go through the same command as the CLI, including dirty state and undo.
+    if snapmode != settings.snapmode {
+        let _ = app.run("setvar", json!({"name":"SNAPMODE","value":snapmode}));
+    }
     if gridmode != settings.gridmode {
         let _ = app.run("setvar", json!({"name":"GRIDMODE","value":gridmode}));
     }

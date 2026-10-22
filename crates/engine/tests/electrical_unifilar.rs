@@ -283,6 +283,23 @@ fn opening_unifilar_aligns_half_columns_without_changing_files_or_plan_settings(
     assert_eq!(grid.origin, Vec2::new(55.0, 0.0));
     assert_eq!(s.drafting_settings().gridunit.x, 17.75);
     assert!(s.drafting_settings().gridmode);
+    assert!(s.drafting_settings().snapmode);
+    assert_eq!(s.drafting_settings().snapunit.y, 12.5);
+    s.settings.osmode = 0;
+    s.settings.otrack = false;
+    s.settings.polarmode = false;
+    let q =
+        cadcraft_engine::snap::tracking::CursorQuery { base: None, deferred: false, corner: false, aperture: 0.1, tol: 0.1, now: 0.0, shift: false };
+    let raw = Vec2::new(133.567, 237.1);
+    assert_eq!(s.snap_cursor(raw, &q).point, Vec2::new(raw.x, 237.5));
+    s.viewport_px = (4000.0, 3000.0);
+    assert_eq!(s.snap_cursor(raw, &q).point, Vec2::new(raw.x, 237.5), "zoom must not change row heights");
+    assert_eq!(s.snap_cursor(Vec2::new(raw.x, -11.8), &q).point, Vec2::new(raw.x, -12.5));
+    s.execute("snap", &json!({})).unwrap();
+    assert!(!s.drafting_settings().snapmode);
+    assert_eq!(s.snap_cursor(raw, &q).point, raw);
+    s.execute("snap", &json!({})).unwrap();
+    assert!(s.drafting_settings().snapmode);
     for i in 0..10 {
         let left = 55.0 + i as f64 * 35.5;
         assert_eq!(grid.origin.x + (i * 2) as f64 * grid.spacing.x, left);
@@ -296,10 +313,15 @@ fn opening_unifilar_aligns_half_columns_without_changing_files_or_plan_settings(
     s.active = plan;
     assert_eq!(s.drafting_settings().gridunit, plan_settings.gridunit);
     assert_eq!(s.drafting_settings().gridmode, plan_settings.gridmode);
+    assert_eq!(s.drafting_settings().snapmode, plan_settings.snapmode);
+    assert_eq!(s.drafting_settings().snapunit, plan_settings.snapunit);
     s.active = index;
     assert_eq!(s.drafting_settings().gridunit.x, 17.75);
     let reopened = cadcraft_io::read(&bytes, "sheet.dxf").unwrap();
     s.open_drawing(reopened, "Reopened", None);
     assert_eq!(s.drafting_settings().gridunit.x, 17.75);
     assert!(!s.state().unwrap().is_dirty());
+    s.execute("line", &json!({"points":[[160,233],[160,240]]})).unwrap();
+    s.settings.osmode = cadcraft_engine::snap::mode::END;
+    assert_eq!(s.snap_cursor(Vec2::new(160.01, 233.02), &q).point, Vec2::new(160.0, 233.0), "ports/endpoints take precedence over rows");
 }
