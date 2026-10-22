@@ -60,7 +60,8 @@ need no extra table rows. Class choices follow the categories described by
 [Lovato Academy](https://academy.lovatoelectric.com/faq-items/cosa-si-intende-per-categoria-di-impiego-di-un-contattore/).
 Class and coil supply are independent; neither is guessed. Populated values
 are printed without labels, except `In [A]`; poles gain `P`. The coil has an
-original character-height vector pictogram. Comando annotations use 1.5 mm text
+original character-height vector pictogram: a horizontal rectangle with terminals
+above and below. Coil voltages use the compact suffix VAC or VDC (e.g. 24 VDC). Comando annotations use 1.5 mm text
 with 2.4 mm row pitch, retaining the centered symbol and column margins.
 Both text and pictogram reserve
 routing space. Empty fields consume no lines. Old data is retained in

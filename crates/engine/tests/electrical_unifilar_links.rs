@@ -470,7 +470,7 @@ fn compact_command_fields_validate_render_and_roundtrip_without_table_rows() {
     assert_eq!(i.insert.x, 27.5);
     let b = f.s.doc().unwrap().block(&i.block).unwrap();
     let texts: Vec<_> = b.entities.iter().filter_map(|e| if let EntityKind::Text(t) = &e.kind { Some(t.value.as_str()) } else { None }).collect();
-    for expected in ["KM1", "CT", "AC-3", "24 V DC", "3P", "In [A] 16"] {
+    for expected in ["KM1", "CT", "AC-3", "24 VDC", "3P", "In [A] 16"] {
         assert!(texts.contains(&expected), "{texts:?}");
     }
     assert_eq!(b.entities.iter().filter(|e| e.common.layer == "UNI_TESTI" && matches!(e.kind, EntityKind::Line(_))).count(), 6);

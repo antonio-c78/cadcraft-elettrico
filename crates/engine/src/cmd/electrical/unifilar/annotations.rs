@@ -95,7 +95,7 @@ pub(super) fn local(
         }
         if command {
             let value = match key.as_str() {
-                "bobina" => format!("{} V {}", value.trim(), fields.get("bobina_alimentazione").map(String::as_str).unwrap_or("")),
+                "bobina" => format!("{} V{}", value.trim(), fields.get("bobina_alimentazione").map(String::as_str).unwrap_or("")),
                 "poli" => format!("{}P", value.trim()),
                 "in_apparecchio" => format!("In [A] {}", value.trim()),
                 _ => value.trim().to_string(),
@@ -133,14 +133,14 @@ pub(super) fn local(
         let row_x = if below { (at.x - w * 0.5).clamp(x, (col.bounds[2] - 1.5 - w).max(x)) } else { x };
         let pos = Vec2::new(row_x + indent, top - i as f64 * (height + 0.9));
         if coil {
-            // Original character-height coil pictogram: rectangle with two terminals.
+            // Original character-height coil: horizontal rectangle, terminals above and below.
             for (a, b) in [
-                ([0., 1.05], [0.4, 1.05]),
-                ([0.4, 0.], [0.4, 2.1]),
-                ([0.4, 2.1], [2.2, 2.1]),
-                ([2.2, 2.1], [2.2, 0.]),
-                ([2.2, 0.], [0.4, 0.]),
-                ([2.2, 1.05], [2.6, 1.05]),
+                ([1.3, 0.], [1.3, 0.55]),
+                ([0.2, 0.55], [0.2, 1.55]),
+                ([0.2, 1.55], [2.4, 1.55]),
+                ([2.4, 1.55], [2.4, 0.55]),
+                ([2.4, 0.55], [0.2, 0.55]),
+                ([1.3, 1.55], [1.3, 2.1]),
             ] {
                 let kind = EntityKind::Line(Line {
                     a: Vec3::new(row_x + a[0] * height / 2.1, pos.y + a[1] * height / 2.1, 0.),
