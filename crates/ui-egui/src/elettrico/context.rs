@@ -67,15 +67,15 @@ pub(crate) fn entries(app: &CadApp) -> Vec<Entry> {
                 children.push(item("ui.elettrico.unifilar.link.bus", "Barra di distribuzione..."));
             }
             if connections::has_port(doc, *h, "in") {
-                children.push(item("ui.elettrico.unifilar.link.branch", "Derivazione da barra..."));
+                children.push(item("ui.elettrico.unifilar.link.branch", "Derivazione da filo o barra..."));
             }
             if connections::has_port(doc, *h, "pe") {
                 children.push(item("ui.elettrico.unifilar.link.pe", "Collega al PE..."));
             }
         } else if e.common.xdata.iter().any(|t| t.code == 1001 && t.value == "CC_UNIFILARE_LINK") {
             children.push(item("ui.elettrico.unifilar.link.edit", "Modifica collegamento..."));
-            if connections::is_bus(doc, *h) {
-                children.push(item("ui.elettrico.unifilar.link.branch", "Derivazione da barra..."));
+            if connections::can_branch(doc, *h) {
+                children.push(item("ui.elettrico.unifilar.link.branch", "Derivazione da filo o barra..."));
             }
             children.push(item("ui.elettrico.unifilar.link.delete", "Elimina collegamento..."));
         }

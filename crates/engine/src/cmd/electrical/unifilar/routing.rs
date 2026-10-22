@@ -31,7 +31,9 @@ pub(super) fn simplify(points: Vec<Vec2>) -> Vec<Vec2> {
             let n = out.len();
             let a = out[n - 2];
             let b = out[n - 1];
-            if ((a.x - b.x).abs() < 1e-7 && (b.x - p.x).abs() < 1e-7) || ((a.y - b.y).abs() < 1e-7 && (b.y - p.y).abs() < 1e-7) {
+            if (b - a).dot(p - b) >= 0.
+                && (((a.x - b.x).abs() < 1e-7 && (b.x - p.x).abs() < 1e-7) || ((a.y - b.y).abs() < 1e-7 && (b.y - p.y).abs() < 1e-7))
+            {
                 out.pop();
             } else {
                 break;
@@ -43,12 +45,17 @@ pub(super) fn simplify(points: Vec<Vec2>) -> Vec<Vec2> {
 }
 pub(super) fn route(a: Vec2, b: Vec2, y: f64, area: Rect, boxes: &[Rect], lanes: &[f64], wires: &[(Vec2, Vec2)]) -> Result<Vec<Vec2>> {
     let fail = || bad("electrical.unifilar.link", "Percorso non disponibile: scegli un'altra altezza o sposta il simbolo.");
-    if !a.is_finite() || !b.is_finite() || !y.is_finite() || y < area[1] || y > area[3] || boxes.len() > 256 {
+    if !a.is_finite() || !b.is_finite() || !y.is_finite() || y < area[1] || y > area[3] || boxes.len() > 2048 {
         return Err(fail());
     }
     let inside = |p: Vec2| p.x >= area[0] && p.x <= area[2] && p.y >= area[1] && p.y <= area[3];
     if !inside(a) || !inside(b) {
         return Err(fail());
+    }
+    let direct = if (a.x - b.x).abs() < 1e-8 { vec![a, b] } else { vec![a, Vec2::new(a.x, y), Vec2::new(b.x, y), b] };
+    let direct = simplify(direct);
+    if direct.windows(2).all(|p| !blocked(p[0], p[1], boxes) && !wires.iter().any(|(c, d)| overlaps_wire(p[0], p[1], *c, *d))) {
+        return Ok(direct);
     }
     let mut xs = vec![a.x, b.x, area[0] + 1.0, area[2] - 1.0];
     let mut ys = vec![a.y, b.y, y, area[1] + 1.0, area[3] - 1.0];

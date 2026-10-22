@@ -491,3 +491,187 @@ fn compact_command_fields_validate_render_and_roundtrip_without_table_rows() {
     f.s.execute("undo", &json!({})).unwrap();
     assert_eq!(f.s.execute("electrical.unifilar.read", &json!({"handle":inserted["handle"]})).unwrap()["fields"]["bobina"], "24");
 }
+
+fn extra_device(f: &mut Fixture, x: f64, y: f64) -> Value {
+    f.s.execute("electrical.unifilar.insert", &json!({"model":f.model,"id":"dev","at":[x,y],"fields":{},"backup_dir":f.root})).unwrap()["handle"]
+        .clone()
+}
+#[test]
+fn vertical_connections_skip_route_questions_and_taps_follow_nested_networks() {
+    use cadcraft_engine::{Input, geom::Vec2};
+    let mut f = fixture();
+    let command = extra_device(&mut f, 27.5, 225.);
+    let lamp1 = extra_device(&mut f, 27.5, 185.);
+    let lamp2 = extra_device(&mut f, 62.5, 185.);
+    let lamp3 = extra_device(&mut f, 97.5, 185.);
+    f.s.set_selection(vec![]);
+    f.s.execute("electrical.unifilar.link.prepare", &json!({"model":f.model,"kind":"series","backup_dir":f.root})).unwrap();
+    f.s.start("electrical.unifilar.link.place").unwrap();
+    f.s.input(Input::Point(Vec2::new(27.5, 263.))).unwrap();
+    f.s.input(Input::Point(Vec2::new(27.5, 225.))).unwrap();
+    assert_eq!(f.s.unifilar_link.as_ref().unwrap().phase, 3);
+    assert!(f.s.unifilar_link.as_ref().unwrap().simple_vertical());
+    f.s.input(Input::Enter).unwrap();
+    let trunk = f
+        .link(json!({"version":2,"kind":"series","from":{"handle":command,"port":"out"},"to":{"handle":lamp1,"port":"in"},"automatic":true,"y":205}));
+    assert_eq!(f.path(&trunk["handle"]), vec![[27.5, 213.], [27.5, 185.]]);
+    // The same primary Connect command accepts a wire origin and needs only the target click.
+    f.s.set_selection(vec![]);
+    f.s.execute("electrical.unifilar.link.prepare", &json!({"model":f.model,"kind":"series","backup_dir":f.root})).unwrap();
+    f.s.start("electrical.unifilar.link.place").unwrap();
+    f.s.input(Input::Point(Vec2::new(27.5, 205.))).unwrap();
+    assert_eq!(f.s.unifilar_link.as_ref().unwrap().link.kind, "branch");
+    f.s.input(Input::Point(Vec2::new(62.5, 185.))).unwrap();
+    assert_eq!(f.s.unifilar_link.as_ref().unwrap().phase, 3);
+    let tap = f.s.unifilar_link.as_ref().unwrap().link.tap.clone().unwrap();
+    assert_eq!(tap.wire, trunk["handle"].as_str().unwrap());
+    f.s.input(Input::Enter).unwrap();
+    let graph = f.s.execute("electrical.unifilar.network.read", &json!({"model":f.model})).unwrap();
+    let branch = graph["wires"].as_array().unwrap().iter().find(|w| !w["junction"].is_null()).unwrap()["handle"].clone();
+    assert_eq!(f.path(&branch), vec![[27.5, 205.], [62.5, 205.], [62.5, 185.]]);
+    let nested=f.link(json!({"version":2,"kind":"branch","tap":{"wire":branch,"part":"route","fraction":17.5/55.},"to":{"handle":lamp3,"port":"in"},"automatic":true,"y":205}));
+    assert_eq!(f.s.execute("electrical.unifilar.link.read", &json!({"handle":trunk["handle"]})).unwrap()["dependents"], 2);
+    let before_erase = f.s.state().unwrap().doc.clone();
+    assert!(f.s.execute("erase", &json!({"handles":[trunk["handle"]]})).is_err());
+    assert!(Arc::ptr_eq(&before_erase, &f.s.state().unwrap().doc));
+
+    let bytes = cadcraft_io::write(f.s.doc().unwrap(), "network.dxf").unwrap();
+    let mut reopened = Session::empty();
+    reopened.open_drawing(cadcraft_io::read(&bytes, "network.dxf").unwrap(), "network", None);
+    let graph = reopened.execute("electrical.unifilar.network.read", &json!({"model":f.model})).unwrap();
+    assert_eq!(graph["junctions"].as_array().unwrap().len(), 2);
+    assert_eq!(graph["wires"].as_array().unwrap().iter().filter(|w| w["destination"]["handle"] == lamp2).count(), 1);
+    // Device relocation recalculates parents before their junction children.
+    let old_path = f.path(&branch);
+    let mut edit = f.s.execute("electrical.unifilar.read", &json!({"handle":command})).unwrap();
+    edit["model"] = json!(f.model);
+    edit["backup_dir"] = json!(f.root);
+    edit["at"] = json!([97.5, 225.]);
+    f.s.execute("electrical.unifilar.update", &edit).unwrap();
+    assert_ne!(f.path(&branch).first(), old_path.first());
+    assert_eq!(f.path(&branch).last(), Some(&[62.5, 185.]));
+    f.s.execute("u", &json!({})).unwrap();
+    assert_eq!(f.path(&branch), old_path);
+    // Parent deletion requires explicit cascade and preserves unrelated conductors.
+    let before = f.s.state().unwrap().doc.clone();
+    assert!(f.s.execute("electrical.unifilar.link.delete", &json!({"handle":trunk["handle"]})).is_err());
+    assert!(Arc::ptr_eq(&before, &f.s.state().unwrap().doc));
+    assert_eq!(
+        f.s.execute("electrical.unifilar.link.delete", &json!({"handle":trunk["handle"],"cascade":true,"backup_dir":f.root})).unwrap()["deleted"],
+        3
+    );
+    assert!(f.s.execute("electrical.unifilar.link.read", &json!({"handle":nested["handle"]})).is_err());
+    f.s.execute("u", &json!({})).unwrap();
+    assert!(f.s.execute("electrical.unifilar.link.read", &json!({"handle":nested["handle"]})).is_ok());
+}
+#[test]
+fn fixed_waypoints_and_hostile_junctions_are_atomic() {
+    let mut f = fixture();
+    let lamp = extra_device(&mut f, 62.5, 185.);
+    let command = extra_device(&mut f, 27.5, 225.);
+    let link=f.link(json!({"version":2,"kind":"series","from":{"handle":command,"port":"out"},"to":{"handle":lamp,"port":"in"},"waypoints":[[45.,205.],[45.,195.]],"y":205}));
+    let path = f.path(&link["handle"]);
+    assert!(path.windows(2).any(|p| p[0][0] == 45. && p[1][0] == 45. && p[0][1].max(p[1][1]) >= 205. && p[0][1].min(p[1][1]) <= 195.));
+    let before = f.s.state().unwrap().doc.clone();
+    for tap in [
+        json!({"wire":link["handle"],"part":"route","fraction":2.}),
+        json!({"wire":"FFFF","part":"route","fraction":0.5}),
+        json!({"wire":link["handle"],"part":"invalid","fraction":0.5}),
+    ] {
+        let result = f.s.execute(
+            "electrical.unifilar.link.insert",
+            &json!({"model":f.model,"link":{"version":2,"kind":"branch","tap":tap,"to":f.port(0,"in"),"y":260},"backup_dir":f.root}),
+        );
+        assert!(result.is_err());
+        assert!(Arc::ptr_eq(&before, &f.s.state().unwrap().doc));
+    }
+    let mut edit = f.s.execute("electrical.unifilar.link.read", &json!({"handle":link["handle"]})).unwrap();
+    edit["model"] = json!(f.model);
+    edit["backup_dir"] = json!(f.root);
+    edit["link"]["kind"] = json!("branch");
+    edit["link"].as_object_mut().unwrap().remove("from");
+    edit["link"]["tap"] = json!({"wire":link["handle"],"part":"route","fraction":0.5});
+    assert!(f.s.execute("electrical.unifilar.link.insert", &edit).is_err());
+    assert!(Arc::ptr_eq(&before, &f.s.state().unwrap().doc));
+}
+
+#[test]
+fn moving_one_segment_preserves_endpoints_and_fixed_anchors() {
+    use cadcraft_engine::{Input, geom::Vec2};
+    let mut f = fixture();
+    let command = extra_device(&mut f, 27.5, 225.);
+    let lamp = extra_device(&mut f, 62.5, 185.);
+    let link=f.link(json!({"version":2,"kind":"series","from":{"handle":command,"port":"out"},"to":{"handle":lamp,"port":"in"},"waypoints":[[45.,205.],[45.,195.]],"y":205}));
+    let original = f.path(&link["handle"]);
+    let mut edit = f.s.execute("electrical.unifilar.link.read", &json!({"handle":link["handle"]})).unwrap();
+    edit["model"] = json!(f.model);
+    edit["backup_dir"] = json!(f.root);
+    f.s.execute("electrical.unifilar.link.prepare", &edit).unwrap();
+    f.s.start("electrical.unifilar.link.place").unwrap();
+    f.s.input(Input::Keyword("Tratto".into())).unwrap();
+    f.s.input(Input::Point(Vec2::new(45., 200.))).unwrap();
+    assert_eq!(f.s.unifilar_link.as_ref().unwrap().phase, 8);
+    f.s.input(Input::Point(Vec2::new(50., 200.))).unwrap();
+    assert_eq!(f.s.unifilar_link.as_ref().unwrap().phase, 3);
+    f.s.input(Input::Enter).unwrap();
+    let path = f.path(&link["handle"]);
+    assert_eq!(path.first(), original.first());
+    assert_eq!(path.last(), original.last());
+    assert!(path.windows(2).any(|p| p[0][0] == 50. && p[1][0] == 50. && p[0][1].max(p[1][1]) >= 205. && p[0][1].min(p[1][1]) <= 195.), "{path:?}");
+    f.s.execute("u", &json!({})).unwrap();
+    assert_eq!(f.path(&link["handle"]), original);
+    // Multiple loads may also share a source terminal directly, without requiring a bus.
+    let lamp2 = extra_device(&mut f, 97.5, 185.);
+    let other = f
+        .link(json!({"version":2,"kind":"series","from":{"handle":command,"port":"out"},"to":{"handle":lamp2,"port":"in"},"automatic":true,"y":200}));
+    assert!(!f.path(&other["handle"]).is_empty());
+}
+
+#[test]
+fn geometric_crossings_do_not_create_electrical_junctions() {
+    let mut f = fixture();
+    let first = f.link(json!({"version":1,"kind":"series","from":f.port(0,"out"),"to":f.port(2,"in"),"y":260}));
+    let second = f.link(json!({"version":1,"kind":"series","from":f.port(1,"out"),"to":f.port(0,"in"),"y":255}));
+    let a = f.path(&first["handle"]);
+    let b = f.path(&second["handle"]);
+    let mut intersections = 0;
+    for p in a.windows(2) {
+        for q in b.windows(2) {
+            let (v, h) = if (p[0][0] - p[1][0]).abs() < 1e-7 { (p, q) } else { (q, p) };
+            if (v[0][0] - v[1][0]).abs() < 1e-7
+                && (h[0][1] - h[1][1]).abs() < 1e-7
+                && v[0][0] > h[0][0].min(h[1][0])
+                && v[0][0] < h[0][0].max(h[1][0])
+                && h[0][1] > v[0][1].min(v[1][1])
+                && h[0][1] < v[0][1].max(v[1][1])
+            {
+                intersections += 1;
+            }
+        }
+    }
+    assert!(intersections > 0, "{a:?} {b:?}");
+    let graph = f.s.execute("electrical.unifilar.network.read", &json!({"model":f.model})).unwrap();
+    assert!(graph["junctions"].as_array().unwrap().is_empty());
+    for h in [&first["handle"], &second["handle"]] {
+        let e = f.s.doc().unwrap().entity(Handle::parse_hex(h.as_str().unwrap()).unwrap()).unwrap();
+        let EntityKind::Insert(i) = &e.kind else { panic!() };
+        assert!(f.s.doc().unwrap().block(&i.block).unwrap().entities.iter().all(|e| !matches!(e.kind, EntityKind::Solid(_))));
+    }
+}
+
+#[test]
+fn a_same_axis_tap_leaves_the_trunk_sideways_without_retracing_it() {
+    let mut f = fixture();
+    let command = extra_device(&mut f, 27.5, 225.);
+    let lamp = extra_device(&mut f, 27.5, 185.);
+    let trunk = f.link(json!({"version":2,"kind":"series","from":f.port(0,"out"),"to":{"handle":command,"port":"in"},"automatic":true,"y":245}));
+    let branch=f.link(json!({"version":2,"kind":"branch","tap":{"wire":trunk["handle"],"part":"route","fraction":18./38.},"to":{"handle":lamp,"port":"in"},"automatic":true,"y":245}));
+    let path = f.path(&branch["handle"]);
+    assert_eq!(path.first(), Some(&[27.5, 245.]));
+    assert_eq!(path.last(), Some(&[27.5, 185.]));
+    for p in path.windows(2) {
+        if p[0][0] == 27.5 && p[1][0] == 27.5 {
+            assert!(p[0][1].max(p[1][1]).min(263.) - p[0][1].min(p[1][1]).max(225.) <= 1e-7, "{path:?}");
+        }
+    }
+}

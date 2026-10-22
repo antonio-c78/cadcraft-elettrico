@@ -126,6 +126,7 @@ pub(crate) fn transform_entities(s: &mut Session, hs: &[Handle], m: &Mat3, copy:
 }
 
 fn erase(s: &mut Session, hs: &[Handle]) -> Result<usize> {
+    super::electrical::unifilar::connections::validate_erase(s.doc()?, hs)?;
     let d = s.doc_mut()?;
     let mut n = 0;
     for h in hs {

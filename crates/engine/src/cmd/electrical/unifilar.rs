@@ -5,6 +5,7 @@ mod annotations;
 pub mod command_fields;
 pub mod connections;
 mod markers;
+mod network;
 pub mod placement;
 mod routing;
 mod schema;

@@ -1,16 +1,26 @@
 //! Attached, orthogonal unifilar connections. All changes commit together after a backup.
 use super::super::*;
-use super::{placement, routing, schema};
+use super::network::{net, validate_graph};
+use super::{network, placement, routing, schema};
 use cadcraft_doc::{Drawing, Handle, Solid};
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Mutex;
 const CMD: &str = "electrical.unifilar.link";
 const APP: &str = "CC_UNIFILARE_LINK";
+mod junctions;
+use junctions::{graph_read, ready_target};
 type PreviewCache = Arc<Mutex<Option<(String, std::result::Result<Vec<EntityKind>, String>)>>>;
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub struct Port {
     pub handle: String,
     pub port: String,
+}
+/// Explicit junction attachment. `part` separates a bus span from its feeding path.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct Tap {
+    pub wire: String,
+    pub part: String,
+    pub fraction: f64,
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Link {
@@ -23,6 +33,12 @@ pub struct Link {
     pub y: f64,
     #[serde(default)]
     pub vertical_x: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tap: Option<Tap>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub waypoints: Vec<[f64; 2]>,
+    #[serde(default)]
+    pub automatic: bool,
 }
 #[derive(Clone)]
 pub struct Draft {
@@ -37,6 +53,8 @@ pub struct Draft {
     env: Arc<Env>,
     cache: PreviewCache,
     vertical_anchor: Option<f64>,
+    moving_segment: Option<usize>,
+    editing_path: Vec<Vec2>,
 }
 impl Draft {
     pub fn proposed_vertical_x(&self) -> Option<f64> {
@@ -51,9 +69,12 @@ impl Draft {
         }
         match (self.link.kind.as_str(), self.phase) {
             (_, 5) => "Scegli il passaggio verticale: al centro fra le colonne, oppure spostalo con il mouse. Invio mantiene il valore proposto.",
-            ("branch", 0) => "Scegli la barra comune a cui collegare la derivazione.",
+            ("branch", 0) => "Scegli il punto di derivazione su un filo o su una barra.",
             ("pe", 0) => "Scegli il punto PE del simbolo (cerchio evidenziato).",
-            (_, 0) => "Scegli l'uscita del simbolo di partenza (cerchio evidenziato).",
+            (_, 0) => "Scegli l'uscita di un simbolo oppure un punto su un filo esistente.",
+            (_, 7) => "Seleziona il tratto da spostare. Poi scegli la nuova posizione.",
+            (_, 8) => "Sposta il tratto con il mouse e clicca per fissarlo. I terminali restano collegati.",
+            (_, 6) => "Aggiungi punti di passaggio. Invio termina il percorso; Indietro rimuove l'ultimo punto.",
             (_, 1) => "Scegli l'ingresso del simbolo di arrivo (cerchio evidenziato).",
             ("bus", 4) => "Scegli l'altra estremità della barra. L'altezza resta quella del primo punto.",
             ("bus", _) => "Scegli la prima estremità e l'altezza della barra comune.",
@@ -66,17 +87,21 @@ struct Node {
     ports: BTreeMap<String, (Vec2, String)>,
     visible: bool,
 }
+#[derive(Clone)]
 struct Obstacle {
     owner: Handle,
     body: bool,
     rect: routing::Rect,
 }
+#[derive(Clone)]
 struct Env {
     nodes: BTreeMap<Handle, Node>,
     boxes: Vec<Obstacle>,
     links: BTreeMap<Handle, Link>,
     layout: schema::Layout,
     wires: Vec<(Handle, Vec2, Vec2)>,
+    paths: BTreeMap<Handle, Vec<Vec2>>,
+    roots: BTreeMap<Handle, (String, String)>,
 }
 fn err(msg: impl Into<String>) -> crate::EngineError {
     bad(CMD, msg)
@@ -107,22 +132,43 @@ pub(super) fn read_link(d: &Drawing, h: Handle) -> Result<Link> {
         return Err(err("Una copia generica del collegamento non è valida: eliminala e crea un nuovo collegamento."));
     }
     let link: Link = serde_json::from_value(m["link"].clone()).map_err(|_| err("Dati del collegamento non validi."))?;
-    if link.version != 1
-        || !["series", "bus", "branch", "pe"].contains(&link.kind.as_str())
-        || !link.y.is_finite()
-        || link.y.abs() > 1000.0
-        || link.vertical_x.is_some_and(|x| !x.is_finite() || x.abs() > 1000.0)
-        || link.span.is_some_and(|s| s.iter().any(|v| !v.is_finite() || v.abs() > 1000.0))
-        || [link.from.as_ref(), link.to.as_ref()].into_iter().flatten().any(|p| p.handle.len() > 32 || p.port.len() > 64)
-        || link.bus.as_ref().is_some_and(|s| s.len() > 32)
-    {
+    if !valid_link(&link) {
         return Err(err("Dati del collegamento non validi."));
     }
     Ok(link)
 }
+fn valid_link(l: &Link) -> bool {
+    [1, 2].contains(&l.version)
+        && ["series", "bus", "branch", "pe"].contains(&l.kind.as_str())
+        && l.y.is_finite()
+        && l.y.abs() <= 1000.
+        && l.vertical_x.is_none_or(|x| x.is_finite() && x.abs() <= 1000.)
+        && l.span.is_none_or(|a| a.iter().all(|v| v.is_finite() && v.abs() <= 1000.))
+        && [l.from.as_ref(), l.to.as_ref()].into_iter().flatten().all(|p| handle(&p.handle).is_ok() && ["in", "out", "pe"].contains(&p.port.as_str()))
+        && l.bus.as_ref().is_none_or(|h| handle(h).is_ok())
+        && l.tap.as_ref().is_none_or(|t| {
+            l.kind == "branch"
+                && l.bus.is_none()
+                && l.from.is_none()
+                && handle(&t.wire).is_ok()
+                && ["route", "bar"].contains(&t.part.as_str())
+                && t.fraction.is_finite()
+                && (0.0..=1.0).contains(&t.fraction)
+        })
+        && l.waypoints.len() <= 32
+        && l.waypoints.iter().flatten().all(|v| v.is_finite() && v.abs() <= 1000.)
+}
 impl Env {
     fn new(d: &Drawing, layout: &schema::Layout) -> Result<Self> {
-        let mut env = Self { nodes: BTreeMap::new(), boxes: Vec::new(), links: BTreeMap::new(), layout: layout.clone(), wires: Vec::new() };
+        let mut env = Self {
+            nodes: BTreeMap::new(),
+            boxes: Vec::new(),
+            links: BTreeMap::new(),
+            layout: layout.clone(),
+            wires: Vec::new(),
+            paths: BTreeMap::new(),
+            roots: BTreeMap::new(),
+        };
         let mut scanned = 0usize;
         if d.entity_count() > 10000 {
             return Err(err("Tavola troppo complessa."));
@@ -130,11 +176,32 @@ impl Env {
         for e in d.model.iter() {
             if e.common.xdata.iter().any(|t| t.code == 1001 && t.value == APP) {
                 env.links.insert(e.handle, read_link(d, e.handle)?);
+                let m = placement::data(e, APP)?.ok_or_else(|| err("Collegamento privo di dati."))?;
+                let raw = m["path"].as_array().filter(|v| v.len() <= 128).ok_or_else(|| err("Percorso non valido."))?;
+                let mut path = Vec::new();
+                for p in raw {
+                    let point: [f64; 2] = serde_json::from_value(p.clone()).map_err(|_| err("Punto del percorso non valido."))?;
+                    if point.iter().any(|v| !v.is_finite() || v.abs() > 1000.) {
+                        return Err(err("Punto del percorso non valido."));
+                    }
+                    path.push(Vec2::new(point[0], point[1]));
+                }
+                env.paths.insert(e.handle, path);
+
                 if let EntityKind::Insert(i) = &e.kind
                     && let Some(block) = d.block(&i.block)
                 {
-                    if block.entities.len() > 8192 {
+                    if block.entities.len() > 512 {
                         return Err(err("Geometria del collegamento troppo complessa."));
+                    }
+                    if let Some(path) = env.paths.get(&e.handle) {
+                        for pair in path.windows(2) {
+                            if ((pair[0].x-pair[1].x).abs()>1e-7 && (pair[0].y-pair[1].y).abs()>1e-7)
+                                || !block.entities.iter().any(|e|matches!(&e.kind,EntityKind::Line(l) if
+                                    (l.a.xy().near(pair[0],1e-6) && l.b.xy().near(pair[1],1e-6)) || (l.a.xy().near(pair[1],1e-6) && l.b.xy().near(pair[0],1e-6)))) {
+                                return Err(err("Il filo è stato modificato con comandi generici: annulla e usa Modifica collegamento."));
+                            }
+                        }
                     }
                     for part in block.entities.iter() {
                         if let EntityKind::Line(l) = &part.kind {
@@ -215,9 +282,10 @@ impl Env {
                 env.boxes.push(Obstacle { owner: e.handle, body: false, rect: [p.x - 0.8, p.y - 0.8, p.x + w + 0.8, p.y + t.height + 0.8] });
             }
         }
-        if env.nodes.len() > 64 || env.links.len() > 256 || env.boxes.len() > 256 {
+        if env.nodes.len() > 128 || env.links.len() > 256 || env.boxes.len() > 2048 {
             return Err(err("Troppi oggetti nella tavola."));
         }
+        env.roots = env.links.iter().map(|(h, l)| net(l, &env.links).map(|n| (*h, n))).collect::<Result<_>>()?;
         Ok(env)
     }
     fn port(&self, p: &Port, id: &str) -> Result<Vec2> {
@@ -282,9 +350,31 @@ impl Env {
         let wires: Vec<_> = self
             .wires
             .iter()
-            .filter(|(h, _, _)| self.links.get(h).and_then(|l| net(l, &self.links).ok()).as_ref() != Some(&root))
+            .filter(|(h, _, _)| self.roots.get(h) != Some(&root) || link.tap.as_ref().is_some_and(|t| Handle::parse_hex(&t.wire) == Some(*h)))
             .map(|(_, a, b)| (*a, *b))
             .collect();
+        if !link.waypoints.is_empty() {
+            let mut path = vec![a];
+            let mut previous = a;
+            for next in link.waypoints.iter().map(|p| Vec2::new(p[0], p[1])).chain(std::iter::once(b)) {
+                path.extend(routing::route(previous, next, next.y, area, &boxes, &lanes, &wires)?);
+                previous = next;
+            }
+            return Ok(routing::simplify(path));
+        }
+        if link.automatic {
+            if a.near(b, 1e-7) {
+                return Ok(vec![a]);
+            }
+            if ((a.x - b.x).abs() < 1e-7 || (a.y - b.y).abs() < 1e-7)
+                && !routing::blocked(a, b, &boxes)
+                && !wires.iter().any(|(c, d)| routing::overlaps_wire(a, b, *c, *d))
+            {
+                return Ok(vec![a, b]);
+            }
+            let preferred = if link.tap.is_some() { a.y } else { (a.y + b.y) * 0.5 };
+            return routing::route(a, b, preferred, area, &boxes, &lanes, &wires);
+        }
         if matches!(link.kind.as_str(), "series" | "branch") && (a.x - b.x).abs() > 1e-7 {
             let x = link.vertical_x.unwrap_or((a.x + b.x) * 0.5);
             let corner = Vec2::new(x, y);
@@ -329,9 +419,11 @@ impl Env {
                     return Err(err("La barra attraversa un simbolo o un testo. Scegli un'altra altezza."));
                 }
                 let mut p = vec![a];
-                if self.wires.iter().any(|(h, a, b)| {
-                    self.links.get(h).and_then(|v| net(v, &self.links).ok()) != net(l, &self.links).ok() && routing::overlaps_wire(start, end, *a, *b)
-                }) {
+                if self
+                    .wires
+                    .iter()
+                    .any(|(h, a, b)| self.roots.get(h) != net(l, &self.links).ok().as_ref() && routing::overlaps_wire(start, end, *a, *b))
+                {
                     return Err(err("La barra si sovrappone a un altro circuito. Scegli un'altra altezza."));
                 }
                 p.extend(self.path(ea, b, l.y, false, l)?);
@@ -341,10 +433,9 @@ impl Env {
                 (routing::simplify(p), Some((start, end)))
             }
             "branch" => {
-                let (bus, span) = self.bus(l.bus.as_deref().ok_or_else(|| err("Scegli la barra comune."))?)?;
                 let (b, eb) = self.stub(to()?, "in")?;
-                let a = Vec2::new(b.x.clamp(span[0], span[1]), bus.y);
-                let ea = a + Vec2::new(0.0, if eb.y >= a.y { 2.0 } else { -2.0 });
+                let a = self.branch_start(l, b)?;
+                let ea = if l.tap.is_some() { self.tap_escape(l, a, eb)? } else { a + Vec2::new(0., if eb.y >= a.y { 2. } else { -2. }) };
                 let boxes: Vec<_> = self.boxes.iter().map(|o| o.rect).collect();
                 if routing::blocked(a, ea, &boxes) {
                     return Err(err("La derivazione parte dentro un simbolo. Sposta la barra."));
@@ -366,6 +457,12 @@ impl Env {
             }
             _ => return Err(err("Tipo di collegamento non valido.")),
         };
+        if points.len() > 128
+            || points.iter().any(|p| !p.is_finite() || p.x.abs() > 1000. || p.y.abs() > 1000.)
+            || points.windows(2).any(|p| (p[0].x - p[1].x).abs() > 1e-7 && (p[0].y - p[1].y).abs() > 1e-7)
+        {
+            return Err(err("Percorso troppo complesso o non ortogonale. Riduci i punti di passaggio."));
+        }
         let mut geometry: Vec<_> = points.windows(2).map(|p| line(p[0], p[1])).collect();
         if let Some((a, b)) = bar {
             geometry.push(line(a, b));
@@ -386,75 +483,6 @@ fn junction(at: Vec2) -> Vec<EntityKind> {
         .collect()
 }
 
-fn power_pair(l: &Link, links: &BTreeMap<Handle, Link>) -> Result<Option<(Handle, Handle)>> {
-    let from = match l.kind.as_str() {
-        "series" => l.from.as_ref(),
-        "branch" => links
-            .get(&handle(l.bus.as_deref().ok_or_else(|| err("Barra comune mancante."))?)?)
-            .filter(|v| v.kind == "bus")
-            .and_then(|v| v.from.as_ref()),
-        _ => return Ok(None),
-    }
-    .ok_or_else(|| err("Origine del collegamento mancante."))?;
-    let to = l.to.as_ref().ok_or_else(|| err("Arrivo del collegamento mancante."))?;
-    Ok(Some((handle(&from.handle)?, handle(&to.handle)?)))
-}
-fn net(l: &Link, links: &BTreeMap<Handle, Link>) -> Result<(String, String)> {
-    if l.kind == "pe" {
-        return Ok(("PE".into(), "pe".into()));
-    }
-    let from = if l.kind == "branch" {
-        links.get(&handle(l.bus.as_deref().ok_or_else(|| err("Barra assente."))?)?).and_then(|b| b.from.as_ref())
-    } else {
-        l.from.as_ref()
-    }
-    .ok_or_else(|| err("Origine assente."))?;
-    Ok((from.handle.clone(), from.port.clone()))
-}
-fn validate_graph(links: &BTreeMap<Handle, Link>) -> Result<()> {
-    if links.len() > 256 {
-        return Err(err("Troppi collegamenti."));
-    }
-    let mut inputs = BTreeSet::new();
-    let mut edges: BTreeMap<Handle, Vec<Handle>> = BTreeMap::new();
-    let mut pe = BTreeSet::new();
-    let mut outputs = BTreeSet::new();
-    for l in links.values() {
-        if matches!(l.kind.as_str(), "series" | "bus")
-            && let Some(from) = &l.from
-            && !outputs.insert((&from.handle, &from.port))
-        {
-            return Err(err("L'uscita è già collegata. Per il parallelo usa la barra comune e le derivazioni."));
-        }
-        if let Some((a, b)) = power_pair(l, links)? {
-            if a == b {
-                return Err(err("Un apparecchio non può alimentare se stesso."));
-            }
-            if !inputs.insert(b) {
-                return Err(err("L'ingresso è già collegato. Modifica o elimina il collegamento esistente."));
-            }
-            edges.entry(a).or_default().push(b);
-        }
-        if l.kind == "pe" && !pe.insert(l.from.as_ref().map(|p| (&p.handle, &p.port))) {
-            return Err(err("Il punto PE è già collegato."));
-        }
-    }
-    for start in edges.keys() {
-        let mut seen = BTreeSet::new();
-        let mut todo = edges.get(start).cloned().unwrap_or_default();
-        while let Some(h) = todo.pop() {
-            if h == *start {
-                return Err(err("Il collegamento creerebbe un circuito chiuso di alimentazione."));
-            }
-            if seen.insert(h)
-                && let Some(next) = edges.get(&h)
-            {
-                todo.extend_from_slice(next);
-            }
-        }
-    }
-    Ok(())
-}
 fn editable(d: &Drawing, h: Handle) -> Result<()> {
     let e = d.entity(h).ok_or_else(|| err("Oggetto assente."))?;
     if d.layer(&e.common.layer).is_some_and(|l| l.locked || l.frozen || !l.on) {
@@ -516,11 +544,16 @@ pub(super) fn refresh(d: &mut Drawing, layout: &schema::Layout) -> Result<()> {
     validate_graph(&env.links)?;
     let mut ready = Vec::new();
     let links = env.links.clone();
-    for (h, l) in &links {
+    for h in network::order(&links)? {
+        let l = links.get(&h).ok_or_else(|| err("Collegamento assente."))?;
         let (g, path) = env.geometry(l)?;
-        env.wires.retain(|(owner, _, _)| owner != h);
-        env.wires.extend(g.iter().filter_map(|k| if let EntityKind::Line(line) = k { Some((*h, line.a.xy(), line.b.xy())) } else { None }));
-        ready.push((*h, l.clone(), g, path));
+        env.paths.insert(h, path.clone());
+        env.wires.retain(|(owner, _, _)| owner != &h);
+        env.wires.extend(g.iter().filter_map(|k| if let EntityKind::Line(line) = k { Some((h, line.a.xy(), line.b.xy())) } else { None }));
+        if env.wires.len() > 8192 {
+            return Err(err("Troppi tratti di collegamento."));
+        }
+        ready.push((h, l.clone(), g, path));
     }
     let roots: BTreeMap<_, _> = links.iter().map(|(h, l)| net(l, &links).map(|root| (*h, root))).collect::<Result<_>>()?;
     for (index, (h, a, b)) in env.wires.iter().enumerate() {
@@ -556,7 +589,7 @@ fn describe(l: &Link, d: &Drawing) -> String {
     match l.kind.as_str() {
         "bus" => format!("Barra comune da {from}"),
         "pe" => format!("{from} → PE"),
-        "branch" => format!("Barra comune → {to}"),
+        "branch" => format!("Derivazione → {to}"),
         _ => format!("{from} → {to}"),
     }
 }
@@ -566,13 +599,30 @@ pub fn has_port(d: &Drawing, h: Handle, id: &str) -> bool {
         .and_then(|m| m["ports"].as_array().cloned())
         .is_some_and(|p| p.iter().any(|v| v["id"] == id))
 }
+pub fn can_branch(d: &Drawing, h: Handle) -> bool {
+    read_link(d, h).is_ok_and(|l| l.kind != "pe")
+}
 pub fn is_bus(d: &Drawing, h: Handle) -> bool {
     read_link(d, h).is_ok_and(|l| l.kind == "bus")
 }
 fn read(s: &mut Session, p: &Value) -> Result<Value> {
     let h = selected(s, p)?;
     let l = read_link(s.doc()?, h)?;
-    Ok(json!({"handle":h.hex(),"description":describe(&l,s.doc()?),"link":l,"uid":s.state()?.uid,"revision":s.state()?.revision}))
+    let mut children = BTreeSet::from([h]);
+    for _ in 0..256 {
+        let before = children.len();
+        for e in s.doc()?.model.iter().filter(|e| e.common.xdata.iter().any(|t| t.code == 1001 && t.value == APP)) {
+            if network::parent(&read_link(s.doc()?, e.handle)?)?.is_some_and(|p| children.contains(&p)) {
+                children.insert(e.handle);
+            }
+        }
+        if children.len() == before {
+            break;
+        }
+    }
+    Ok(
+        json!({"handle":h.hex(),"description":describe(&l,s.doc()?),"link":l,"dependents":children.len().saturating_sub(1),"uid":s.state()?.uid,"revision":s.state()?.revision}),
+    )
 }
 fn prepare(s: &mut Session, p: &Value) -> Result<Value> {
     if s.running.is_some() {
@@ -586,7 +636,7 @@ fn prepare(s: &mut Session, p: &Value) -> Result<Value> {
         read_link(s.doc()?, h)?
     } else {
         Link {
-            version: 1,
+            version: 2,
             kind: p["kind"].as_str().unwrap_or("series").into(),
             from: None,
             to: None,
@@ -594,6 +644,9 @@ fn prepare(s: &mut Session, p: &Value) -> Result<Value> {
             span: None,
             y: 262.5,
             vertical_x: None,
+            tap: None,
+            waypoints: Vec::new(),
+            automatic: false,
         }
     };
     if let Some(raw) = p.get("link") {
@@ -602,15 +655,11 @@ fn prepare(s: &mut Session, p: &Value) -> Result<Value> {
         }
         l = serde_json::from_value(raw.clone()).map_err(|_| err("Dati del collegamento non validi."))?;
     }
-    if !["series", "bus", "branch", "pe"].contains(&l.kind.as_str())
-        || l.version != 1
-        || !l.y.is_finite()
-        || l.vertical_x.is_some_and(|x| !x.is_finite() || x.abs() > 1000.0)
-    {
-        return Err(err("Tipo di collegamento non valido."));
+    if !valid_link(&l) {
+        return Err(err("Tipo o dati del collegamento non validi."));
     }
     if let Some(h) = target {
-        if read_link(s.doc()?, h)?.kind != l.kind {
+        if (read_link(s.doc()?, h)?.kind == "pe") != (l.kind == "pe") {
             return Err(err("Mantieni lo stesso tipo di collegamento durante la modifica."));
         }
         if let Some(uid) = p.get("uid")
@@ -635,10 +684,8 @@ fn prepare(s: &mut Session, p: &Value) -> Result<Value> {
             l.from = Some(Port { handle: h.hex(), port: port.into() });
         }
     }
-    let phase = if p.get("link").is_some() || l.kind == "pe" && l.from.is_some() {
+    let phase = if p.get("link").is_some() || target.is_some() || l.kind == "pe" && l.from.is_some() {
         3
-    } else if target.is_some() {
-        2
     } else if l.kind == "branch" {
         if l.bus.is_some() { 1 } else { 0 }
     } else if l.from.is_none() {
@@ -661,6 +708,8 @@ fn prepare(s: &mut Session, p: &Value) -> Result<Value> {
         env,
         cache: Arc::new(Mutex::new(None)),
         vertical_anchor: None,
+        moving_segment: None,
+        editing_path: Vec::new(),
     });
     Ok(json!({"prepared":true}))
 }
@@ -671,6 +720,14 @@ fn current(s: &Session) -> Result<&Draft> {
     }
     Ok(d)
 }
+fn candidate_geometry(d: &Draft, l: &Link) -> Result<(Vec<EntityKind>, Vec<Vec2>)> {
+    let mut env = (*d.env).clone();
+    env.links.insert(d.target.unwrap_or(Handle(0)), l.clone());
+    validate_graph(&env.links)?;
+    env.wires.retain(|(h, _, _)| Some(*h) != d.target);
+    env.roots = env.links.iter().map(|(h, l)| net(l, &env.links).map(|n| (*h, n))).collect::<Result<_>>()?;
+    env.geometry(l)
+}
 fn drawing(d: &Draft, l: &Link) -> Result<Vec<EntityKind>> {
     let key = serde_json::to_string(l).map_err(|e| err(e.to_string()))?;
     if let Ok(cache) = d.cache.lock()
@@ -679,20 +736,9 @@ fn drawing(d: &Draft, l: &Link) -> Result<Vec<EntityKind>> {
     {
         return value.clone().map_err(err);
     }
-    let result = (|| {
-        let mut links = d.env.links.clone();
-        links.insert(d.target.unwrap_or(Handle(0)), l.clone());
-        validate_graph(&links)?;
-        d.env.geometry(l).map(|v| v.0)
-    })();
+    let result = candidate_geometry(d, l).map(|v| v.0);
     if let Ok(mut cache) = d.cache.lock() {
-        *cache = Some((
-            key,
-            result.as_ref().map(Clone::clone).map_err(|e| match e {
-                crate::EngineError::BadParams { msg, .. } => msg.clone(),
-                _ => e.to_string(),
-            }),
-        ));
+        *cache = Some((key, result.as_ref().map(Clone::clone).map_err(|e| e.to_string())));
     }
     result
 }
@@ -703,7 +749,7 @@ fn commit(s: &mut Session) -> Result<Value> {
     }
     let _ = drawing(&d, &d.link)?;
     let mut doc = s.doc()?.clone();
-    let (g, path) = d.env.geometry(&d.link)?;
+    let (g, path) = candidate_geometry(&d, &d.link)?;
     let h = store(&mut doc, d.target, &d.link, g, path)?;
     refresh(&mut doc, &d.layout)?;
     let backup = backup(s.doc()?, d.backup_dir.as_deref())?;
@@ -736,17 +782,20 @@ fn delete(s: &mut Session, p: &Value) -> Result<Value> {
         return Err(err("Il collegamento è cambiato. Riapri la conferma."));
     }
     let mut remove = vec![h];
-    if l.kind == "bus" {
-        for e in doc.model.iter() {
-            if let Some(m) = placement::data(e, APP)?
-                && m["link"]["bus"] == h.hex()
-            {
+    for _ in 0..256 {
+        let count = remove.len();
+        for e in doc.model.iter().filter(|e| e.common.xdata.iter().any(|t| t.code == 1001 && t.value == APP)) {
+            let link = read_link(&doc, e.handle)?;
+            if network::parent(&link)?.is_some_and(|p| remove.contains(&p)) && !remove.contains(&e.handle) {
                 remove.push(e.handle);
             }
         }
+        if count == remove.len() {
+            break;
+        }
     }
     if remove.len() > 1 && p["cascade"] != true {
-        return Err(err("La barra ha derivazioni: conferma l'eliminazione della barra e delle sue derivazioni."));
+        return Err(err("Il collegamento ha derivazioni: conferma l'eliminazione anche dei rami dipendenti."));
     }
     let roots: BTreeSet<_> = remove.iter().map(|h| h.hex()).collect();
     for e in doc.model.iter() {
@@ -772,11 +821,18 @@ pub fn snap_port(s: &Session, p: Vec2, tol: f64) -> Option<Vec2> {
     let d = current(s).ok()?;
     let id = match (d.link.kind.as_str(), d.phase) {
         ("pe", 0) => "pe",
-        ("branch", 0) => return None,
+        ("branch", 0) => return d.env.pick_tap(&d.baseline, p, tol.max(1.)).map(|v| v.1),
         (_, 0) => "out",
         (_, 1) => "in",
         _ => return None,
     };
+    if d.phase == 0
+        && d.link.kind != "pe"
+        && d.link.kind != "bus"
+        && let Some((_, at)) = d.env.pick_tap(&d.baseline, p, tol.max(1.))
+    {
+        return Some(at);
+    }
     d.env
         .nodes
         .values()
@@ -790,28 +846,16 @@ fn point(d: &mut Draft, p: Vec2) -> Result<()> {
         return Err(err("Punto non valido."));
     }
     if d.phase == 0 {
-        if d.link.kind == "branch" {
-            let mut nearest = None;
-            let mut distance = 4.0;
-            for (h, l) in &d.env.links {
-                if d.baseline.entity(*h).is_none_or(|e| !e.common.visible || d.baseline.layer(&e.common.layer).is_some_and(|l| !l.on || l.frozen)) {
-                    continue;
-                }
-                if l.kind == "bus"
-                    && let Some(span) = l.span
-                {
-                    let at = Vec2::new(p.x.clamp(span[0], span[1]), l.y);
-                    let dist = p.dist(at);
-                    if dist < distance {
-                        nearest = Some(h.hex());
-                        distance = dist;
-                    }
-                }
-            }
-            d.link.bus = Some(nearest.ok_or_else(|| err("Clicca sulla linea orizzontale di una barra comune."))?);
-            d.phase = if d.link.to.is_some() { 2 } else { 1 };
-        } else {
-            d.link.from = Some(d.env.choose(p, if d.link.kind == "pe" { "pe" } else { "out" })?);
+        let port = if d.link.kind != "branch" { d.env.choose(p, if d.link.kind == "pe" { "pe" } else { "out" }).ok() } else { None };
+        let tapped = if d.link.kind != "pe" && d.link.kind != "bus" { d.env.pick_tap(&d.baseline, p, 4.) } else { None };
+        let choose_port =
+            port.as_ref().is_some_and(|port| d.env.port(port, if d.link.kind == "pe" { "pe" } else { "out" }).is_ok_and(|q| q.dist(p) < 1.5))
+                || tapped.is_none();
+        if choose_port && let Some(port) = port {
+            d.link.from = Some(port);
+            d.link.tap = None;
+            d.link.bus = None;
+            d.link.kind = if d.link.kind == "branch" { "series".into() } else { d.link.kind.clone() };
             d.phase = if d.link.kind == "pe" {
                 3
             } else if d.link.kind == "series" {
@@ -819,10 +863,50 @@ fn point(d: &mut Draft, p: Vec2) -> Result<()> {
             } else {
                 2
             };
+        } else if let Some((tap, _)) = tapped {
+            d.link.from = None;
+            d.link.bus = None;
+            d.link.tap = Some(tap);
+            d.link.kind = "branch".into();
+            d.phase = 1;
+        } else {
+            return Err(err("Scegli un terminale evidenziato o un filo elettrico esistente."));
+        }
+        if d.link.to.is_some() && d.phase == 1 {
+            ready_target(d)?;
         }
     } else if d.phase == 1 {
         d.link.to = Some(d.env.choose(p, "in")?);
-        d.phase = 2;
+        ready_target(d)?;
+    } else if d.phase == 7 {
+        let (_, path) = candidate_geometry(d, &d.link)?;
+        let mut best = None;
+        let mut distance = 4.;
+        for (index, segment) in path.windows(2).enumerate() {
+            let delta = segment[1] - segment[0];
+            let length = delta.dot(delta);
+            if length < 1e-7 {
+                continue;
+            }
+            let at = segment[0] + delta * ((p - segment[0]).dot(delta) / length).clamp(0., 1.);
+            if p.dist(at) < distance {
+                best = Some(index);
+                distance = p.dist(at);
+            }
+        }
+        d.moving_segment = Some(best.ok_or_else(|| err("Clicca su un tratto del collegamento in anteprima."))?);
+        d.editing_path = path;
+        d.phase = 8;
+    } else if d.phase == 8 {
+        let l = junctions::shift_segment(d, p)?;
+        let _ = drawing(d, &l)?;
+        d.link = l;
+        d.phase = 3;
+    } else if d.phase == 6 {
+        if d.link.waypoints.len() >= 32 {
+            return Err(err("Al massimo 32 punti di passaggio."));
+        }
+        d.link.waypoints.push([p.x, p.y]);
     } else if d.phase == 2 {
         if d.link.kind == "bus" {
             if p.x < d.layout.drawing_area[0]
@@ -840,6 +924,8 @@ fn point(d: &mut Draft, p: Vec2) -> Result<()> {
         }
         let mut l = d.link.clone();
         l.y = p.y;
+        l.automatic = false;
+        l.waypoints.clear();
         let offset = vertical_default(d)?;
         if offset.is_some() {
             d.link = l;
@@ -854,6 +940,8 @@ fn point(d: &mut Draft, p: Vec2) -> Result<()> {
     } else if d.phase == 5 {
         let mut l = d.link.clone();
         l.vertical_x = Some(p.x);
+        l.automatic = false;
+        l.waypoints.clear();
         let _ = drawing(d, &l)?;
         d.link = l;
         d.phase = 3;
@@ -880,8 +968,7 @@ fn vertical_default(d: &Draft) -> Result<Option<f64>> {
     let a = if d.link.kind == "series" {
         d.env.port(d.link.from.as_ref().ok_or_else(|| err("Scegli l'origine."))?, "out")?
     } else if d.link.kind == "branch" {
-        let (bus, span) = d.env.bus(d.link.bus.as_deref().ok_or_else(|| err("Scegli la barra."))?)?;
-        Vec2::new(b.x.clamp(span[0], span[1]), bus.y)
+        d.env.branch_start(&d.link, b)?
     } else {
         return Ok(None);
     };
@@ -889,6 +976,7 @@ fn vertical_default(d: &Draft) -> Result<Option<f64>> {
 }
 pub(super) fn specs() -> Vec<CommandSpec> {
     vec![
+        CommandSpec::new("electrical.unifilar.network.read", "Read unifilar network", graph_read).noundo(),
         CommandSpec::new("electrical.unifilar.link.prepare", "Prepare unifilar connection", prepare).noundo(),
         CommandSpec::new("electrical.unifilar.link.insert", "Insert unifilar connection", insert),
         CommandSpec::new("electrical.unifilar.link.read", "Read unifilar connection", read).noundo(),
@@ -908,13 +996,21 @@ impl Interactive for Place {
     }
     fn prompt(&self, s: &Session) -> Prompt {
         let text = s.unifilar_link.as_ref().map(|d| d.error.as_deref().unwrap_or(d.instruction())).unwrap_or("Avvia un collegamento.");
-        Prompt::new(text, Accept::POINT).kw(&["Indietro", "Origine", "Destinazione", "Percorso", "Verticale"])
+        Prompt::new(text, Accept::POINT).kw(&["Indietro", "Origine", "Destinazione", "Percorso", "Verticale", "Punti", "Automatico", "Tratto"])
     }
     fn input(&mut self, s: &mut Session, input: Input) -> Result<Step> {
         match input {
             Input::Cancel => {
                 s.unifilar_link = None;
                 Ok(Step::Cancel)
+            }
+            Input::Enter if current(s)?.phase == 6 => {
+                let mut d = current(s)?.clone();
+                let _ = drawing(&d, &d.link)?;
+                d.phase = 3;
+                d.error = None;
+                s.unifilar_link = Some(d);
+                Ok(Step::Continue)
             }
             Input::Enter if current(s)?.phase == 5 => {
                 let mut d = current(s)?.clone();
@@ -942,19 +1038,48 @@ impl Interactive for Place {
             Input::Keyword(k) => {
                 let mut d = current(s)?.clone();
                 let key = k.to_lowercase();
-                d.phase = match key.as_str() {
-                    "origine" => 0,
-                    "destinazione" if d.link.kind == "series" || d.link.kind == "branch" => 1,
-                    "percorso" => 2,
-                    "verticale" if vertical_default(&d)?.is_some() => 5,
-                    _ if d.phase == 5 => 2,
-                    _ if d.phase == 3 && vertical_default(&d)?.is_some() => 5,
-                    _ if d.phase == 4 => 2,
-                    _ if d.phase == 3 && d.link.kind == "bus" => 4,
-                    _ if d.link.kind == "pe" => 0,
-                    _ if d.phase == 2 && d.link.kind == "bus" => 0,
-                    _ => d.phase.saturating_sub(1),
-                };
+                if ["punti", "automatico", "tratto"].contains(&key.as_str()) && (d.phase < 2 || d.link.kind == "bus") {
+                    return Err(err("Completa prima la scelta dei terminali."));
+                }
+                if key == "tratto" {
+                    d.phase = 7;
+                    d.moving_segment = None;
+                    d.editing_path.clear();
+                } else if key == "indietro" && d.phase == 8 {
+                    d.phase = 7;
+                } else if key == "indietro" && d.phase == 7 {
+                    d.phase = 3;
+                } else if key == "punti" {
+                    d.link.waypoints.clear();
+                    d.link.automatic = false;
+                    d.phase = 6;
+                } else if key == "automatico" {
+                    d.link.waypoints.clear();
+                    d.link.vertical_x = None;
+                    d.link.automatic = true;
+                    let _ = drawing(&d, &d.link)?;
+                    d.phase = 3;
+                } else if key == "indietro" && d.phase == 6 {
+                    d.link.waypoints.pop();
+                } else {
+                    d.phase = match key.as_str() {
+                        "origine" => 0,
+                        "destinazione" if d.link.kind == "series" || d.link.kind == "branch" => 1,
+                        "percorso" => 2,
+                        "verticale" if vertical_default(&d)?.is_some() => 5,
+                        _ if d.phase == 5 => 2,
+                        _ if d.phase == 3 && vertical_default(&d)?.is_some() => 5,
+                        _ if d.phase == 4 => 2,
+                        _ if d.phase == 3 && d.link.kind == "bus" => 4,
+                        _ if d.link.kind == "pe" => 0,
+                        _ if d.phase == 2 && d.link.kind == "bus" => 0,
+                        _ => d.phase.saturating_sub(1),
+                    };
+                }
+                if key == "verticale" {
+                    d.link.automatic = false;
+                    d.link.waypoints.clear();
+                }
                 d.error = None;
                 d.vertical_anchor = None;
                 s.unifilar_link = Some(d);
@@ -992,14 +1117,18 @@ impl Interactive for Place {
             } else {
                 "out"
             };
-            if d.link.kind == "branch" && d.phase == 0 {
-                return d
-                    .env
-                    .links
-                    .values()
-                    .filter(|l| l.kind == "bus")
-                    .filter_map(|l| l.span.map(|x| line(Vec2::new(x[0], l.y), Vec2::new(x[1], l.y))))
-                    .collect();
+            if d.phase == 0 && d.link.kind != "pe" && d.link.kind != "bus" {
+                let mut eligible: Vec<_> =
+                    d.env.wires.iter().filter(|(h, _, _)| d.env.links.get(h).is_some_and(|l| l.kind != "pe")).map(|(_, a, b)| line(*a, *b)).collect();
+                if let Some((_, at)) = d.env.pick_tap(&d.baseline, cursor, 4.) {
+                    eligible.push(EntityKind::Circle(cadcraft_doc::Circle { center: at.to3(0.), radius: 1.0 }));
+                }
+                for node in d.env.nodes.values().filter(|n| n.visible) {
+                    if let Some((p, _)) = node.ports.get("out") {
+                        eligible.push(EntityKind::Circle(cadcraft_doc::Circle { center: p.to3(0.), radius: 0.8 }));
+                    }
+                }
+                return eligible;
             }
             return d
                 .env
@@ -1014,11 +1143,23 @@ impl Interactive for Place {
                 .collect();
         }
         let mut l = d.link.clone();
-        if d.phase == 2 {
+        if d.phase == 7 {
+            return drawing(d, &l).unwrap_or_default();
+        }
+        if d.phase == 8 {
+            return junctions::shift_segment(d, cursor).and_then(|l| drawing(d, &l)).unwrap_or_default();
+        }
+        if d.phase == 6 {
+            if l.waypoints.len() < 32 {
+                l.waypoints.push([cursor.x, cursor.y]);
+            }
+        } else if d.phase == 2 {
             if l.kind == "bus" {
                 return vec![EntityKind::Circle(cadcraft_doc::Circle { center: cursor.to3(0.0), radius: 0.8 })];
             }
             l.y = cursor.y;
+            l.automatic = false;
+            l.waypoints.clear();
         } else if d.phase == 5 {
             if d.vertical_anchor.is_none_or(|x| (x - cursor.x).abs() > 1e-7) {
                 l.vertical_x = Some(cursor.x);
@@ -1030,4 +1171,37 @@ impl Interactive for Place {
         }
         drawing(d, &l).unwrap_or_default()
     }
+}
+
+/// Generic ERASE must not leave electrical references dangling. Explicit deletion offers cascade.
+pub(crate) fn validate_erase(d: &Drawing, selected: &[Handle]) -> Result<()> {
+    let removed: BTreeSet<_> =
+        selected.iter().copied().filter(|h| d.entity(*h).and_then(|e| d.layer(&e.common.layer)).is_none_or(|l| !l.locked)).collect();
+    if !selected.iter().any(|h| {
+        d.entity(*h).is_some_and(|e| e.common.xdata.iter().any(|t| t.code == 1001 && [APP, "CC_UNIFILARE_DEVICE"].contains(&t.value.as_str())))
+    }) {
+        return Ok(());
+    }
+    if d.entity_count() > 10000 {
+        return Err(err("Tavola troppo complessa per verificare le dipendenze elettriche."));
+    }
+    for e in d.model.iter().filter(|e| !removed.contains(&e.handle)) {
+        if e.common.xdata.iter().any(|t| t.code == 1001 && t.value == APP) {
+            let l = read_link(d, e.handle)?;
+            if network::parent(&l)?.is_some_and(|h| removed.contains(&h))
+                || [l.from.as_ref(), l.to.as_ref()].into_iter().flatten().any(|p| Handle::parse_hex(&p.handle).is_some_and(|h| removed.contains(&h)))
+            {
+                return Err(err(
+                    "L'oggetto ha collegamenti dipendenti: usa Elimina collegamento oppure seleziona anche tutti i collegamenti da eliminare.",
+                ));
+            }
+        }
+        if let Some(m) = placement::data(e, "CC_UNIFILARE_DEVICE")?
+            && m["kind"] == "line_marker"
+            && m["line"].as_str().and_then(Handle::parse_hex).is_some_and(|h| removed.contains(&h))
+        {
+            return Err(err("Il filo ha marcatori collegati: usa Elimina collegamento per includerli."));
+        }
+    }
+    Ok(())
 }

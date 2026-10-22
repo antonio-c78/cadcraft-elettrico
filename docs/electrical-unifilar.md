@@ -31,11 +31,11 @@ Vertical placement snaps to the major horizontal rows automatically. The standar
 
 ## Attached connections
 
-`Collega simboli`, `Barra di distribuzione`, `Derivazione da barra` and `Collega al PE` use explicit symbol ports and persistent reference handles. A floating, movable guide shows the current step, port circles, preview, Back/Change controls and a final confirmation. No geometry is committed until confirmation. Bars have two independent endpoints; their feeding path can pass around the source's column. The same guide edits existing connections from their context menu. Connection deletion has a separate confirmation; deleting a bus explicitly includes its branches and attached markers.
+`Collega simboli`, `Barra di distribuzione`, `Derivazione da filo o barra` and `Collega al PE` use explicit symbol ports and persistent reference handles. A floating, movable guide shows the current step, port circles, preview, Back/Change controls and a final confirmation. No geometry is committed until confirmation. Bars have two independent endpoints; their feeding path can pass around the source's column. The same guide edits existing connections from their context menu. Connection deletion has a separate confirmation; deleting a bus explicitly includes its branches and attached markers.
 
-Series connections join `out` to `in`; branches join a bus to `in`; PE connections require an explicit `pe` port and terminate exactly on the existing lower PE bar. One incoming power connection is allowed per device. One direct output connection is allowed; additional parallel loads use a bus and branches. Power cycles, duplicate inputs and incompatible ports are rejected. Ports absent from the approved catalog must be reviewed rather than invented. Junction dots are generated at actual branches and PE joins. Crossings do not connect circuits; collinear overlap between different networks is forbidden.
+Series connections join `out` to `in`; branches join an explicit point on a wire or bus to `in`; PE connections require an explicit `pe` port and terminate exactly on the existing lower PE bar. One incoming power connection is allowed per device. Multiple loads may share an output, a bus, or explicit wire junctions. Power cycles, duplicate inputs and incompatible ports are rejected. Ports absent from the approved catalog must be reviewed rather than invented. Junction dots are generated at actual branches and PE joins. Crossings do not connect circuits; collinear overlap between different networks is forbidden.
 
-The bounded Manhattan visibility router avoids conservative rectangles around native device graphics and labels, prefers the chosen horizontal routing level and caps route complexity. `electrical.unifilar.link.prepare/place` stage the guide; `.insert` accepts a complete version-1 `link` (`kind`, optional `from`/`to` port references, `bus`, `span`, `y`); `.read` and `.delete` expose the native objects. Connections are ordinary DXF block references on `UNI_COLLEGAMENTI` or `UNI_PE` with chunked `CC_UNIFILARE_LINK` metadata and an owner handle. Related edits, marker updates and a complete drawing backup are atomic and share one Undo step.
+The bounded Manhattan visibility router avoids conservative rectangles around native device graphics and labels, prefers the chosen horizontal routing level and caps route complexity. `electrical.unifilar.link.prepare/place` stage the guide; `.insert` accepts a complete version-1 or version-2 `link` (`kind`, optional `from`/`to` port references, `bus`, `span`, `y`); `.read` and `.delete` expose the native objects. Connections are ordinary DXF block references on `UNI_COLLEGAMENTI` or `UNI_PE` with chunked `CC_UNIFILARE_LINK` metadata and an owner handle. Related edits, marker updates and a complete drawing backup are atomic and share one Undo step.
 
 Use `Modifica apparecchio` / `Sposta / cambia colonna` to move connected devices. Attached paths update together and table data stays in its proper column. Removing a required port, a route that no longer fits, or a marker that no longer fits its segment rejects the whole edit. Generic MOVE/ROTATE/SCALE/COPY do not maintain these attachments and are detected when reading/editing; Undo restores the native object. Use `Elimina collegamento` for dependency-aware deletion; multi-sheet continuation and electrical calculations are outside this phase.
 
@@ -67,3 +67,43 @@ Both text and pictogram reserve
 routing space. Empty fields consume no lines. Old data is retained in
 legacy_fields when an existing device is explicitly edited; opening a drawing
 does not rewrite it. Short editable type defaults fit the centered columns.
+
+
+## Junction network and route editing (version 2)
+
+Topology lives in `network.rs`, independently of the Manhattan router and guide.
+A v2 branch stores `tap: {wire, part: "route"|"bar", fraction: 0..1}` instead
+of `from`/`bus`. Its junction follows the parent path by normalized arc length.
+A branch can itself have children. A bounded dependency order refreshes parents
+before their children, preserving reference handles and markers. Opening a v1
+sheet does not rewrite it; existing port and bus references remain readable.
+`electrical.unifilar.network.read {model}` returns ports, wires, explicit
+junctions and source-net identities for future tools. An intersection alone
+never creates a junction or merges two networks. PE stays a separate network.
+
+The main Connect command accepts either a source output or a projected point
+on an existing visible native wire. A free same-axis connection proceeds from
+two endpoint clicks directly to confirmation. Tapped branches propose a compact
+orthogonal route automatically. Cross-column port connections retain the guided
+height and midpoint passage, with manual override. Every preview and commit
+uses the same candidate environment without the edited wire's stale geometry.
+
+The guide offers automatic routing, up to 32 fixed waypoints, and Move segment:
+select a segment then its new position. Fixed coordinates survive device moves;
+only paths between anchors and the terminal stubs are recalculated. All paths
+remain orthogonal, avoid symbol/text rectangles, and stay above PE unless they
+are PE connections. A failed edit leaves the original drawing unchanged.
+Deleting a wire with descendants requires explicit cascade confirmation; deleting
+one leaf leaves siblings intact. Dots belong to their branch and disappear with
+it; shared junctions remain visible while another child still owns them.
+
+Bounds: 128 devices, 256 links, 32 fixed anchors per link, 128 route vertices,
+8192 wire segments and 2048 obstacle rectangles. Simple routes use cheap
+validated candidates before the bounded 40000-point visibility grid. Power-feed
+cycles and duplicate inputs are still rejected; inter-sheet references, arbitrary
+plain CAD lines as electrical conductors, and electrical calculations are outside
+this release. Use native device/connection edits rather than generic transforms.
+
+Synthetic regressions cover the illustrated vertical trunk and lamp branch,
+nested junctions, v1 compatibility, v2 DXF round trips, device relocation, Undo,
+manual segment movement, fixed anchors, dependent deletion and malformed data.

@@ -50,7 +50,7 @@ pub(super) fn show(app: &mut CadApp, ctx: &egui::Context) {
         let mut action = None;
         let title = match d.link.kind.as_str() {
             "bus" => "Barra di distribuzione — Unifilare",
-            "branch" => "Derivazione da barra — Unifilare",
+            "branch" => "Derivazione da filo o barra — Unifilare",
             "pe" => "Collega al PE — Unifilare",
             _ => "Collega simboli — Unifilare",
         };
@@ -62,13 +62,26 @@ pub(super) fn show(app: &mut CadApp, ctx: &egui::Context) {
             .show(ctx, |ui| {
                 ui.heading(d.description());
                 ui.label(d.instruction());
-                ui.label("I cerchi evidenziano i punti utilizzabili. Esc annulla.");
-                if d.phase >= 2 && d.link.kind != "pe" {
+                ui.label(if d.phase <= 1 {
+                    "I cerchi evidenziano i punti utilizzabili. Esc annulla."
+                } else {
+                    "Controlla il percorso nel disegno. Esc annulla."
+                });
+                if (2..=5).contains(&d.phase) && d.link.kind != "pe" && !d.simple_vertical() && !d.link.automatic && d.link.waypoints.is_empty() {
                     let y = if d.phase == 2 { app.canvas.cursor.map(|p| p.y).unwrap_or(d.link.y) } else { d.link.y };
                     ui.label(format!("Altezza percorso: {y:.2} mm · scatto verticale F9"));
                 }
-                if let Some(x) = d.proposed_vertical_x() {
+                if !d.simple_vertical()
+                    && !d.link.automatic
+                    && let Some(x) = d.proposed_vertical_x()
+                {
                     ui.label(format!("Passaggio verticale proposto: X {x:.2} mm"));
+                }
+                if d.simple_vertical() {
+                    ui.label("Collegamento verticale diretto: nessuna posizione da impostare.");
+                }
+                if d.phase == 6 {
+                    ui.label(format!("{} punti fissati · Invio termina il percorso", d.link.waypoints.len()));
                 }
                 if let Some(error) = &d.error {
                     ui.colored_label(ui.visuals().error_fg_color, error);
@@ -85,15 +98,32 @@ pub(super) fn show(app: &mut CadApp, ctx: &egui::Context) {
                         if matches!(d.link.kind.as_str(), "series" | "branch") && ui.button("Cambia arrivo").clicked() {
                             action = Some("Destinazione");
                         }
-                        if d.link.kind != "pe" && ui.button(if d.link.kind == "bus" { "Cambia percorso" } else { "Cambia altezza" }).clicked() {
+                        if d.link.kind != "pe"
+                            && !d.simple_vertical()
+                            && ui.button(if d.link.kind == "bus" { "Cambia percorso" } else { "Cambia altezza" }).clicked()
+                        {
                             action = Some("Percorso");
                         }
-                        if d.proposed_vertical_x().is_some() && ui.button("Cambia passaggio verticale").clicked() {
+                        if !d.simple_vertical() && d.proposed_vertical_x().is_some() && ui.button("Cambia passaggio verticale").clicked() {
                             action = Some("Verticale");
                         }
                     }
                 });
-                ui.horizontal(|ui| {
+                ui.horizontal_wrapped(|ui| {
+                    if d.phase == 3 && d.link.kind != "bus" {
+                        if ui.button("Percorso automatico").clicked() {
+                            action = Some("Automatico");
+                        }
+                        if ui.button("Sposta un tratto...").clicked() {
+                            action = Some("Tratto");
+                        }
+                        if ui.button("Punti di passaggio...").clicked() {
+                            action = Some("Punti");
+                        }
+                    }
+                    if d.phase == 6 && ui.button("Termina punti").clicked() {
+                        action = Some("");
+                    }
                     if d.phase == 5 && ui.button("Mantieni posizione proposta").clicked() {
                         action = Some("");
                     }
@@ -115,8 +145,10 @@ pub(super) fn show(app: &mut CadApp, ctx: &egui::Context) {
             if action == "cancel" {
                 app.session.cancel();
                 app.session.unifilar_link = None;
-            } else {
-                let _ = app.cmdline(action);
+            } else if let Some(error) = app.cmdline(action)
+                && let Some(d) = &mut app.session.unifilar_link
+            {
+                d.error = Some(error);
             }
         }
     }
@@ -124,7 +156,7 @@ pub(super) fn show(app: &mut CadApp, ctx: &egui::Context) {
     if let Some(object) = state.deleting.clone() {
         let mut open = true;
         let mut delete = false;
-        let bus = object["link"]["kind"] == "bus";
+        let bus = object["dependents"].as_u64().unwrap_or(0) > 0;
         egui::Window::new("Elimina collegamento — Unifilare")
             .id(egui::Id::new("unifilar.connection.delete"))
             .open(&mut open)
@@ -132,13 +164,13 @@ pub(super) fn show(app: &mut CadApp, ctx: &egui::Context) {
             .show(ctx, |ui| {
                 ui.label(object["description"].as_str().unwrap_or("Collegamento selezionato"));
                 if bus {
-                    ui.label("Verranno eliminate la barra e tutte le sue derivazioni.");
+                    ui.label("Verranno eliminati il collegamento e tutti i rami che dipendono da esso.");
                 }
                 ui.label("Verranno eliminati anche gli eventuali marcatori collegati.");
                 if let Some(error) = &state.error {
                     ui.colored_label(ui.visuals().error_fg_color, error);
                 }
-                delete = ui.button(if bus { "Elimina barra e derivazioni" } else { "Elimina collegamento" }).clicked();
+                delete = ui.button(if bus { "Elimina collegamento e derivazioni" } else { "Elimina collegamento" }).clicked();
             });
         if delete {
             let mut p = object;

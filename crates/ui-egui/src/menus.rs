@@ -21,7 +21,12 @@ pub const UI_COMMANDS: &[(&str, &str, &[&str], Option<&str>)] = &[
     ("ui.elettrico.unifilar.edit", "Modifica apparecchio...", &["Elettrico", "Schemi unifilari", "Modifica apparecchio..."], None),
     ("ui.elettrico.unifilar.link.series", "Collega simboli...", &["Elettrico", "Schemi unifilari", "Collega simboli..."], None),
     ("ui.elettrico.unifilar.link.bus", "Barra di distribuzione...", &["Elettrico", "Schemi unifilari", "Barra di distribuzione..."], None),
-    ("ui.elettrico.unifilar.link.branch", "Derivazione da barra...", &["Elettrico", "Schemi unifilari", "Derivazione da barra..."], None),
+    (
+        "ui.elettrico.unifilar.link.branch",
+        "Derivazione da filo o barra...",
+        &["Elettrico", "Schemi unifilari", "Derivazione da filo o barra..."],
+        None,
+    ),
     ("ui.elettrico.unifilar.link.pe", "Collega al PE...", &["Elettrico", "Schemi unifilari", "Collega al PE..."], None),
     ("ui.elettrico.unifilar.link.edit", "Modifica collegamento...", &["Elettrico", "Schemi unifilari", "Modifica collegamento..."], None),
     ("ui.elettrico.unifilar.link.delete", "Elimina collegamento...", &["Elettrico", "Schemi unifilari", "Elimina collegamento..."], None),
