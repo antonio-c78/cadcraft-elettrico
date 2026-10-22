@@ -1,6 +1,7 @@
 //! A new unifilar drawing is fully validated before it becomes an independent unsaved tab.
 use super::*;
 use std::collections::{BTreeMap, BTreeSet};
+mod annotations;
 pub mod connections;
 mod markers;
 pub mod placement;

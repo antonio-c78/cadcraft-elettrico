@@ -254,3 +254,133 @@ fn series_vertical_pass_defaults_to_midpoint_and_can_be_overridden() {
     f.s.execute("u", &json!({})).unwrap();
     assert!(f.s.execute("electrical.unifilar.link.read", &json!({"handle":h.hex()})).unwrap()["link"]["vertical_x"].is_null());
 }
+
+#[test]
+fn local_device_data_shares_a_column_and_line_data_owns_only_its_cells() {
+    let mut f = fixture();
+    f.s.doc_mut().unwrap().ensure_layer("UNI_GUIDE");
+    let guide =
+        f.s.doc_mut()
+            .unwrap()
+            .add(
+                &cadcraft_engine::doc::Space::Model,
+                cadcraft_engine::doc::Common { layer: "UNI_GUIDE".into(), ..Default::default() },
+                EntityKind::Line(Line { a: Vec3::new(32., 171., 0.), b: Vec3::new(32., 282., 0.) }),
+            )
+            .unwrap();
+    assert!(f.s.doc().unwrap().entity(guide).is_some());
+    let cat_path = f.root.join("catalogo.json");
+    let mut cat: Value = serde_json::from_slice(&std::fs::read(&cat_path).unwrap()).unwrap();
+    let mut command = cat["symbols"][0].clone();
+    command["id"] = json!("command");
+    command["category"] = json!("Comando");
+    command["data_position"] = json!("right");
+    let mut terminal = command.clone();
+    terminal["id"] = json!("terminal");
+    terminal["category"] = json!("Utilizzatori");
+    terminal["data_position"] = json!("below");
+    terminal["ports"].as_array_mut().unwrap().retain(|p| p["id"] != "out");
+    let mut marker = cat["symbols"][2].clone();
+    marker["fields"] = json!(["cavo", "formazione", "lunghezza"]);
+    cat["symbols"].as_array_mut().unwrap().extend([command, terminal]);
+    cat["symbols"][2] = marker;
+    std::fs::write(&cat_path, cat.to_string()).unwrap();
+    let mut model: Value = serde_json::from_slice(&std::fs::read(&f.model).unwrap()).unwrap();
+    for (i, key) in ["cavo", "formazione", "lunghezza"].iter().enumerate() {
+        model["table"]["rows"].as_array_mut().unwrap().push(json!({"id":key,"label":key}));
+        for col in model["columns"].as_array_mut().unwrap() {
+            let x = col["bounds"][0].as_f64().unwrap();
+            let y = 140. - i as f64 * 6.;
+            col["cells"][key] = json!({"bounds":[x,y-6.,x+35.,y],"text_center":[x+17.5,y-3.],"padding_mm":1.5,"max_lines":1});
+        }
+    }
+    std::fs::write(&f.model, model.to_string()).unwrap();
+    let mut added = Vec::new();
+    for (id, y, sigla) in [("command", 245., "KM1"), ("terminal", 215., "M1"), ("terminal", 185., "M2")] {
+        let r =
+            f.s.execute("electrical.unifilar.insert", &json!({"model":f.model,"id":id,"at":[27.5,y],"fields":{"sigla":sigla},"backup_dir":f.root}))
+                .unwrap();
+        let h = Handle::parse_hex(r["handle"].as_str().unwrap()).unwrap();
+        let EntityKind::Insert(i) = &f.s.doc().unwrap().entity(h).unwrap().kind else { panic!() };
+        let text: Vec<_> =
+            f.s.doc()
+                .unwrap()
+                .block(&i.block)
+                .unwrap()
+                .entities
+                .iter()
+                .filter_map(|e| if let EntityKind::Text(t) = &e.kind { Some(t.insert.y + i.insert.y) } else { None })
+                .collect();
+        assert!(!text.is_empty() && text.iter().all(|y| *y > 164.));
+        added.push(r["handle"].clone());
+    }
+    let before = f.s.state().unwrap().doc.clone();
+    assert!(
+        f.s.execute(
+            "electrical.unifilar.insert",
+            &json!({"model":f.model,"id":"terminal","at":[27.5,185.],"fields":{"sigla":"duplicate"},"backup_dir":f.root})
+        )
+        .is_err()
+    );
+    assert!(Arc::ptr_eq(&before, &f.s.state().unwrap().doc));
+    f.s.execute("line", &json!({"points":[[27.5,210.],[27.5,225.]]})).unwrap();
+    let p = json!({"model":f.model,"id":"mark","at":[27.5,220.],"fields":{"cavo":"FG16","formazione":"3G2.5","lunghezza":"20"},"backup_dir":f.root});
+    let r = f.s.execute("electrical.unifilar.insert", &p).unwrap();
+    assert_eq!(r["column"], 1);
+    let before = f.s.state().unwrap().doc.clone();
+    assert!(f.s.execute("electrical.unifilar.insert", &p).is_err());
+    assert!(Arc::ptr_eq(&before, &f.s.state().unwrap().doc));
+    let bytes = cadcraft_io::write(f.s.doc().unwrap(), "roundtrip.dxf").unwrap();
+    let mut reopened = Session::empty();
+    reopened.open_drawing(cadcraft_io::read(&bytes, "roundtrip.dxf").unwrap(), "test", None);
+    let m = reopened.execute("electrical.unifilar.read", &json!({"handle":added[0]})).unwrap();
+    assert_eq!(m["data_position"], "right");
+    assert_eq!(m["fields"]["sigla"], "KM1");
+    // An attached marker follows the bar while cable data stays in its table column.
+    let bus = f.link(json!({"version":1,"kind":"bus","from":f.port(0,"out"),"span":[45,145],"y":275}));
+    let marker = f
+        .s
+        .execute("electrical.unifilar.insert", &json!({"model":f.model,"id":"mark","at":[62.5,275.],"fields":{"cavo":"FG16"},"backup_dir":f.root}))
+        .unwrap();
+    let world_texts = |s: &Session, h: &Value| {
+        let h = Handle::parse_hex(h.as_str().unwrap()).unwrap();
+        let EntityKind::Insert(i) = &s.doc().unwrap().entity(h).unwrap().kind else { panic!() };
+        s.doc()
+            .unwrap()
+            .block(&i.block)
+            .unwrap()
+            .entities
+            .iter()
+            .filter_map(|e| if let EntityKind::Text(t) = &e.kind { Some((t.value.clone(), t.insert.xy() + i.insert.xy(), t.rotation)) } else { None })
+            .collect::<Vec<_>>()
+    };
+    let texts = world_texts(&f.s, &marker["handle"]);
+    let mut edit = f.s.execute("electrical.unifilar.link.read", &json!({"handle":bus["handle"]})).unwrap();
+    edit["model"] = json!(f.model);
+    edit["backup_dir"] = json!(f.root);
+    edit["link"]["y"] = json!(262.5);
+    f.s.execute("electrical.unifilar.link.insert", &edit).unwrap();
+    assert_eq!(world_texts(&f.s, &marker["handle"]), texts);
+    assert_eq!(f.s.execute("electrical.unifilar.read", &json!({"handle":marker["handle"]})).unwrap()["at"][1], 262.5);
+    // Explicitly editing an older field policy archives obsolete values instead of losing them.
+    cat["symbols"][0]["fields"] = json!(["sigla", "cavo"]);
+    std::fs::write(&cat_path, cat.to_string()).unwrap();
+    let old = f
+        .s
+        .execute("electrical.unifilar.insert", &json!({"model":f.model,"id":"dev","at":[62.5,195.],"fields":{"cavo":"legacy"},"backup_dir":f.root}));
+    // Column two already has cable data from the marker: select an unclaimed row on column four instead.
+    assert!(old.is_err());
+    let old = f
+        .s
+        .execute("electrical.unifilar.insert", &json!({"model":f.model,"id":"dev","at":[132.5,195.],"fields":{"cavo":"legacy"},"backup_dir":f.root}))
+        .unwrap();
+    cat["symbols"][0]["fields"] = json!(["sigla"]);
+    std::fs::write(&cat_path, cat.to_string()).unwrap();
+    let mut edit = f.s.execute("electrical.unifilar.read", &json!({"handle":old["handle"]})).unwrap();
+    edit["model"] = json!(f.model);
+    edit["backup_dir"] = json!(f.root);
+    f.s.execute("electrical.unifilar.update", &edit).unwrap();
+    let meta = f.s.execute("electrical.unifilar.read", &json!({"handle":old["handle"]})).unwrap();
+    assert!(meta["fields"].get("cavo").is_none());
+    assert_eq!(meta["legacy_fields"]["cavo"], "legacy");
+}

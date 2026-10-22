@@ -101,9 +101,9 @@ fn form(ui: &mut egui::Ui, state: &mut State) -> Option<&'static str> {
     ui.columns(2, |cols| {
         preview::show_symbol(&mut cols[0], state.library.as_ref().and_then(|l| l.symbol(i)));
         cols[0].label(if symbol["kind"] == "line_marker" {
-            "Si applica a una linea esistente e non occupa una colonna della tabella."
+            "Si applica a una linea esistente. I dati del cavo vanno nella tabella della colonna scelta."
         } else {
-            "Il simbolo si aggancia al centro della colonna. L'altezza la scegli nel disegno."
+            "Il simbolo si allinea agli altri dispositivi della colonna. L'altezza la scegli nel disegno."
         });
         let fav = state.favorites.contains(&c.id);
         if cols[0].button(if fav { "★ Rimuovi dai preferiti" } else { "☆ Aggiungi ai preferiti" }).clicked() {
@@ -113,16 +113,26 @@ fn form(ui: &mut egui::Ui, state: &mut State) -> Option<&'static str> {
                 state.favorites.insert(c.id.clone());
             }
         }
-        cols[1].label("Dati facoltativi · le celle seguono l'apparecchio");
+        cols[1].label(match symbol["data_position"].as_str().unwrap_or("table") {
+            "below" => "Dati facoltativi · sotto il simbolo, prima della barra PE",
+            "right" => "Dati facoltativi · a destra del simbolo",
+            _ => "Dati facoltativi · nella tabella della colonna",
+        });
         egui::ScrollArea::vertical().id_salt("unifilar.fields").max_height(370.0).show(&mut cols[1], |ui| {
             egui::Grid::new("unifilar.device.fields").num_columns(2).spacing([10.0, 6.0]).show(ui, |ui| {
                 if let Some(fields) = symbol["fields"].as_array() {
                     for key in fields.iter().filter_map(Value::as_str) {
-                        let label = state.data["layout"]["table"]["rows"]
-                            .as_array()
-                            .and_then(|rows| rows.iter().find(|r| r["id"] == key))
-                            .and_then(|r| r["label"].as_str())
-                            .unwrap_or(key);
+                        let label = if key == "descrizione" && symbol["data_position"].as_str().unwrap_or("table") != "table" {
+                            "Descrizione"
+                        } else if key == "tipo" && symbol["data_position"].as_str().unwrap_or("table") != "table" {
+                            "Tipo dispositivo"
+                        } else {
+                            state.data["layout"]["table"]["rows"]
+                                .as_array()
+                                .and_then(|rows| rows.iter().find(|r| r["id"] == key))
+                                .and_then(|r| r["label"].as_str())
+                                .unwrap_or(key)
+                        };
                         ui.label(label);
                         let v = state.fields.entry(key.into()).or_default();
                         if key == "descrizione" {
@@ -137,7 +147,7 @@ fn form(ui: &mut egui::Ui, state: &mut State) -> Option<&'static str> {
         });
     });
     ui.separator();
-    if symbol["kind"] != "line_marker" {
+    if symbol["data_position"].as_str().unwrap_or("table") == "table" {
         ui.collapsing("Anteprima della colonna in tabella", |ui| {
             egui::ScrollArea::vertical().id_salt("unifilar.cell.preview").max_height(280.0).show(ui, |ui| column_preview(ui, state));
         });
@@ -330,7 +340,7 @@ fn placing_guide(app: &mut CadApp, ctx: &egui::Context) {
         .resizable(false)
         .show(ctx, |ui| {
             ui.label("Scegli il punto nel disegno. Esc annulla.");
-            ui.label("Apparecchi: centro colonna e altezza libera. Marcatori: clic sulla linea.");
+            ui.label("Apparecchi: allineamento nella colonna e altezza libera. Marcatori: clic sulla linea.");
             if let Some(error) = &error {
                 ui.colored_label(ui.visuals().error_fg_color, error);
             }

@@ -14,6 +14,7 @@ pub struct Draft {
     symbol: Symbol,
     geometry: Vec<EntityKind>,
     fields: BTreeMap<String, String>,
+    legacy_fields: BTreeMap<String, String>,
     target: Option<Handle>,
     backup_dir: Option<String>,
     pub error: Option<String>,
@@ -183,12 +184,31 @@ pub(super) fn prepare(s: &mut Session, p: &Value) -> Result<Value> {
     }
     let mut fields: BTreeMap<String, String> =
         serde_json::from_value(p.get("fields").cloned().unwrap_or_else(|| json!({}))).map_err(|e| bad(CMD, e.to_string()))?;
+    let mut legacy_fields = BTreeMap::new();
+    if let Some(h) = target {
+        let old = metadata(s, h)?;
+        for source in ["legacy_fields", "fields"] {
+            if let Some(values) = old[source].as_object() {
+                for (key, value) in values {
+                    if !symbol.fields.contains(key)
+                        && let Some(value) = value.as_str()
+                    {
+                        legacy_fields.insert(key.clone(), value.to_string());
+                    }
+                }
+            }
+        }
+        fields.retain(|k, v| symbol.fields.contains(k) || legacy_fields.get(k) != Some(v));
+    }
     for (key, value) in &symbol.defaults {
         fields.entry(key.clone()).or_insert_with(|| value.clone());
     }
     if fields.len() > 32 || fields.iter().any(|(k, v)| !symbol.fields.contains(k) || v.len() > 1024 || v.chars().any(|c| c.is_control() && c != '\n'))
     {
         return Err(bad(CMD, "Campi del dispositivo non validi."));
+    }
+    if json!([fields, legacy_fields]).to_string().len() > 24000 {
+        return Err(bad(CMD, "Troppi dati nel dispositivo. Abbrevia i testi."));
     }
     let source = read_drawing(&library)?;
     let block = source.block(&symbol.block).ok_or_else(|| bad(CMD, "Simbolo assente dalla libreria."))?;
@@ -197,9 +217,20 @@ pub(super) fn prepare(s: &mut Session, p: &Value) -> Result<Value> {
     if backup_dir.as_ref().is_some_and(|v| v.len() > 32768) {
         return Err(bad(CMD, "Percorso backup troppo lungo."));
     }
-    let draft = Draft { uid: s.state()?.uid, baseline: s.state()?.doc.clone(), layout, symbol, geometry, fields, target, backup_dir, error: None };
+    let draft = Draft {
+        uid: s.state()?.uid,
+        baseline: s.state()?.doc.clone(),
+        layout,
+        symbol,
+        geometry,
+        fields,
+        legacy_fields,
+        target,
+        backup_dir,
+        error: None,
+    };
     // Validate every populated cell before leaving the form, so a click cannot reveal a text overflow.
-    for col in &draft.layout.columns {
+    for col in draft.layout.columns.iter().filter(|_| draft.symbol.data_position == "table") {
         for (key, value) in &draft.fields {
             if let Some(cell) = col.cells.get(key) {
                 let _ = cell_lines(value, cell)?;
@@ -243,7 +274,7 @@ pub fn cell_lines(text: &str, c: &Cell) -> Result<Vec<String>> {
     }
     Ok(lines)
 }
-fn text(at: Vec2, value: String, height: f64) -> EntityKind {
+pub(super) fn text(at: Vec2, value: String, height: f64) -> EntityKind {
     EntityKind::Text(Text {
         insert: Vec3::new(at.x, at.y, 0.0),
         align_pt: None,
@@ -283,17 +314,18 @@ fn candidate(s: &Session, d: &Draft, p: Vec2) -> Result<Candidate> {
         return marker(s, d, p);
     }
     let col = column(d, p)?;
+    let mut axis = col.axis_x + d.symbol.axis_offset_mm;
     for e in s.doc()?.model.iter() {
-        if Some(e.handle) == d.target {
-            continue;
-        }
         if let Some(m) = data(e, APP)?
+            && m["kind"] == "device"
             && m["column"].as_u64() == Some(col.index as u64)
+            && let Some(x) = m["at"][0].as_f64().filter(|x| x.is_finite())
         {
-            return Err(bad(CMD, format!("Colonna {} occupata: scegli una colonna libera.", col.index)));
+            axis = x;
+            break;
         }
     }
-    let at = Vec2::new(col.axis_x, p.y);
+    let at = Vec2::new(axis, p.y);
     let mut geometry = d.geometry.clone();
     for k in &mut geometry {
         k.transform(&Mat3::translate(at));
@@ -308,6 +340,14 @@ fn candidate(s: &Session, d: &Draft, p: Vec2) -> Result<Candidate> {
         || b.max.x > col.bounds[2] - 1.0
     {
         return Err(bad(CMD, "Il simbolo esce dalla colonna o invade la fascia PE. Scegli un'altra altezza."));
+    }
+    let obstacles = super::annotations::obstacles(s.doc()?, d.target, d.layout.drawing_area[1])?;
+    if obstacles.iter().any(|r| overlaps([b.min.x - 0.7, b.min.y - 0.7, b.max.x + 0.7, b.max.y + 0.7], *r)) {
+        return Err(bad(CMD, "Il simbolo si sovrappone a un altro dispositivo o ai suoi dati. Scegli un'altra altezza."));
+    }
+    if d.symbol.data_position != "table" {
+        let cells = super::annotations::local(&d.symbol, &d.fields, col, at, b, &obstacles, &d.layout)?;
+        return Ok(Candidate { at, column: Some(col.index), geometry, label: None, cells, line: None, attachment: None });
     }
     let sigla = d.fields.get("sigla").map(|v| v.trim()).unwrap_or("");
     let mut label = None;
@@ -327,20 +367,32 @@ fn candidate(s: &Session, d: &Draft, p: Vec2) -> Result<Candidate> {
                 if geometry.iter().any(|k| matches!(k,EntityKind::Line(l) if segment_rect(l.a.xy(),l.b.xy(),rect))) {
                     continue;
                 }
+                if obstacles.iter().any(|r| overlaps(rect, *r)) {
+                    continue;
+                }
                 // Direct draft lines/text must not be hidden by the label. Native devices occupy other columns.
-                if s.doc()?.model.iter().any(|e| match &e.kind {
-                    EntityKind::Line(l) => segment_rect(l.a.xy(), l.b.xy(), rect),
-                    EntityKind::Text(t) => overlaps(
-                        [
-                            t.insert.x,
-                            t.insert.y - 0.5,
-                            t.insert.x + cadcraft_fonts::line_width(&t.value, t.height, t.width_factor),
-                            t.insert.y + t.height,
-                        ],
-                        rect,
-                    ),
-                    _ => false,
-                }) {
+                if s.doc()?
+                    .model
+                    .iter()
+                    .filter(|e| {
+                        e.common.visible
+                            && e.common.layer != "UNI_GUIDE"
+                            && s.doc().is_ok_and(|d| d.layer(&e.common.layer).is_none_or(|l| l.on && !l.frozen))
+                    })
+                    .any(|e| match &e.kind {
+                        EntityKind::Line(l) => segment_rect(l.a.xy(), l.b.xy(), rect),
+                        EntityKind::Text(t) => overlaps(
+                            [
+                                t.insert.x,
+                                t.insert.y - 0.5,
+                                t.insert.x + cadcraft_fonts::line_width(&t.value, t.height, t.width_factor),
+                                t.insert.y + t.height,
+                            ],
+                            rect,
+                        ),
+                        _ => false,
+                    })
+                {
                     continue;
                 }
                 found = Some(text(Vec2::new(x, y), sigla.into(), 2.3));
@@ -352,6 +404,28 @@ fn candidate(s: &Session, d: &Draft, p: Vec2) -> Result<Candidate> {
         }
         label = Some(found.ok_or_else(|| bad(CMD, "Non c'è spazio libero per la sigla. Abbreviala o cambia altezza."))?);
     }
+    let cells = table_cells(s, d, col)?;
+    Ok(Candidate { at, column: Some(col.index), geometry, label, cells, line: None, attachment: None })
+}
+fn table_cells(s: &Session, d: &Draft, col: &Column) -> Result<Vec<EntityKind>> {
+    for e in s.doc()?.model.iter().filter(|e| Some(e.handle) != d.target) {
+        if let Some(m) = data(e, APP)?
+            && m["column"].as_u64() == Some(col.index as u64)
+            && m["data_position"].as_str().unwrap_or("table") == "table"
+        {
+            for (key, value) in &d.fields {
+                if !value.trim().is_empty() && m["fields"][key].as_str().is_some_and(|v| !v.trim().is_empty()) {
+                    return Err(bad(
+                        CMD,
+                        format!(
+                            "La casella {key} della colonna {} è già compilata da un altro simbolo. Modifica quel dato prima di assegnarlo qui.",
+                            col.index
+                        ),
+                    ));
+                }
+            }
+        }
+    }
     let mut cells = Vec::new();
     for (key, value) in &d.fields {
         let cell = col.cells.get(key).ok_or_else(|| bad(CMD, "Cella non disponibile."))?;
@@ -362,7 +436,7 @@ fn candidate(s: &Session, d: &Draft, p: Vec2) -> Result<Candidate> {
             cells.push(text(Vec2::new(cell.text_center[0] - width / 2.0, y - i as f64 * 3.0), value, 2.1));
         }
     }
-    Ok(Candidate { at, column: Some(col.index), geometry, label, cells, line: None, attachment: None })
+    Ok(cells)
 }
 fn marker(s: &Session, d: &Draft, p: Vec2) -> Result<Candidate> {
     let mut best = None;
@@ -412,12 +486,14 @@ fn marker(s: &Session, d: &Draft, p: Vec2) -> Result<Candidate> {
             }
         }
     }
+    let col = if d.fields.values().any(|v| !v.trim().is_empty()) { Some(column(d, at)?) } else { None };
+    let cells = col.map(|c| table_cells(s, d, c)).transpose()?.unwrap_or_default();
     Ok(Candidate {
         at,
-        column: None,
+        column: col.map(|c| c.index),
         geometry,
         label: None,
-        cells: vec![],
+        cells,
         line: Some(handle),
         attachment: super::markers::attachment(&segments, index, at, angle),
     })
@@ -455,7 +531,7 @@ fn commit(s: &mut Session, p: Vec2) -> Result<Value> {
     tags(
         &mut common,
         APP,
-        &json!({"version":1,"model":d.layout.id,"symbol":d.symbol.id,"name":d.symbol.name,"kind":d.symbol.kind,"column":c.column,"fields":d.fields,"at":[c.at.x,c.at.y],"ports":d.symbol.ports,"line":c.line.map(|h|h.hex()),"attachment":c.attachment}),
+        &json!({"version":1,"model":d.layout.id,"symbol":d.symbol.id,"name":d.symbol.name,"kind":d.symbol.kind,"column":c.column,"fields":d.fields,"legacy_fields":d.legacy_fields,"data_position":d.symbol.data_position,"at":[c.at.x,c.at.y],"ports":d.symbol.ports,"line":c.line.map(|h|h.hex()),"attachment":c.attachment}),
     );
     let kind = EntityKind::Insert(Insert {
         block: name,

@@ -47,6 +47,13 @@ pub struct Symbol {
     pub ports: Vec<Value>,
     #[serde(default)]
     pub defaults: BTreeMap<String, String>,
+    #[serde(default = "table_position")]
+    pub data_position: String,
+    #[serde(default)]
+    pub axis_offset_mm: f64,
+}
+fn table_position() -> String {
+    "table".into()
 }
 #[derive(Deserialize)]
 struct Catalog {
@@ -88,6 +95,9 @@ pub(super) fn load(path: &str) -> Result<(Layout, Vec<Symbol>, String)> {
             || sym.defaults.len() > 32
             || sym.defaults.iter().any(|(k, v)| !sym.fields.contains(k) || v.len() > 256 || v.chars().any(char::is_control))
             || sym.fields.len() > 32
+            || !["table", "right", "below"].contains(&sym.data_position.as_str())
+            || !sym.axis_offset_mm.is_finite()
+            || sym.axis_offset_mm.abs() > 8.0
             || sym.ports.len() > 16
             || serde_json::to_string(&sym.ports).map_or(true, |s| s.len() > 4096)
             || sym.fields.iter().any(|f| !layout.table.rows.iter().any(|r| &r.id == f))

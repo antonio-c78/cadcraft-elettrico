@@ -126,7 +126,11 @@ pub(super) fn refresh(d: &mut Drawing, layout: &schema::Layout) -> Result<()> {
         let mut block = Block::new(&name);
         for part in source.entities.iter() {
             let mut kind = part.kind.clone();
-            kind.transform(&Mat3::rotate(angle - old_angle));
+            if part.common.layer == "UNI_TESTI" {
+                kind.transform(&Mat3::translate(Vec2::new(old_at[0], old_at[1]) - at));
+            } else {
+                kind.transform(&Mat3::rotate(angle - old_angle));
+            }
             if let EntityKind::Line(l) = &kind {
                 for p in [l.a.xy() + at, l.b.xy() + at] {
                     let projection = p.dot(dir);
