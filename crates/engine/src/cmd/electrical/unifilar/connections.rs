@@ -803,6 +803,7 @@ fn candidate_geometry(d: &Draft, l: &Link) -> Result<(Vec<EntityKind>, Vec<Vec2>
     env.links.insert(d.target.unwrap_or(Handle(0)), l.clone());
     validate_graph(&env.links)?;
     env.wires.retain(|(h, _, _)| Some(*h) != d.target);
+    env.paths.retain(|h, _| Some(*h) != d.target);
     env.roots = env.links.iter().map(|(h, l)| net(l, &env.links).map(|n| (*h, n))).collect::<Result<_>>()?;
     env.geometry(l)
 }

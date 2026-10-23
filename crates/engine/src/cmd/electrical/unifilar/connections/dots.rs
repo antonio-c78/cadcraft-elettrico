@@ -28,12 +28,12 @@ pub(super) fn rebuild(d: &mut Drawing) -> Result<()> {
             return Err(err("Troppi vertici."));
         }
         if let Some(p) = path.first()
-            && (l.tap.is_some() || l.kind == "branch")
+            && (l.from.is_some() || l.tap.is_some() || l.kind == "branch")
         {
             candidates.push((e.handle, Vec2::new(p[0], p[1]), false, false));
         }
         if let Some(p) = path.last()
-            && (l.end_tap.is_some() || l.kind == "bus" || l.kind == "pe" || l.pe_x.is_some())
+            && (l.to.is_some() || l.end_tap.is_some() || l.kind == "bus" || l.kind == "pe" || l.pe_x.is_some())
         {
             candidates.push((e.handle, Vec2::new(p[0], p[1]), l.kind == "pe" || l.pe_x.is_some(), true));
         }
@@ -75,7 +75,7 @@ pub(super) fn rebuild(d: &mut Drawing) -> Result<()> {
                 }
             }
         }
-        if ports.iter().any(|p| p.near(at, 1e-6)) || emitted.iter().any(|p| p.near(at, 1e-6)) {
+        if emitted.iter().any(|p| p.near(at, 1e-6)) {
             continue;
         }
         let mut rays = Vec::<Vec2>::new();
@@ -103,7 +103,15 @@ pub(super) fn rebuild(d: &mut Drawing) -> Result<()> {
                 }
             }
         }
-        if pe || rays.len() >= 3 {
+        // The device supplies one electrical leg: two attached wires already branch.
+        // Only route endpoints count here; an unrelated crossing is not an attachment.
+        let terminal_branch = ports.iter().any(|p| p.near(at, 1e-6))
+            && paths
+                .iter()
+                .filter(|(h, path)| nets.get(h) == nets.get(&owner) && [path.first(), path.last()].into_iter().flatten().any(|p| p.near(at, 1e-6)))
+                .count()
+                >= 2;
+        if pe || terminal_branch || rays.len() >= 3 {
             marks.entry(owner).or_default().push(at);
             emitted.push(at);
         }

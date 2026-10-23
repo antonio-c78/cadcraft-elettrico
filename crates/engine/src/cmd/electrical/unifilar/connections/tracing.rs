@@ -141,7 +141,7 @@ impl Env {
     }
     fn needs_dot(&self, at: Vec2) -> bool {
         if self.nodes.values().any(|n| n.ports.values().any(|(p, _)| p.near(at, 1e-6))) {
-            return false;
+            return self.paths.values().any(|path| [path.first(), path.last()].into_iter().flatten().any(|p| p.near(at, 1e-6)));
         }
         let mut rays = Vec::<Vec2>::new();
         for (a, b) in self.wires.iter().map(|(_, a, b)| (*a, *b)) {
@@ -174,7 +174,7 @@ impl Env {
         let a = self.start(l)?;
         for (at, tap, pe, end) in [(a, l.tap.as_ref(), l.pe_start.is_some(), false), (b, l.end_tap.as_ref(), l.pe_x.is_some(), true)] {
             let at = if let Some(t) = tap { contacts::junction(self, t, &path, end)? } else { at };
-            if pe || (tap.is_some() && self.needs_dot(at)) {
+            if pe || ((tap.is_some() || (if end { l.to.is_some() } else { l.from.is_some() })) && self.needs_dot(at)) {
                 g.extend(junction(at));
             }
         }

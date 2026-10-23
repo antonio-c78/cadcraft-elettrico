@@ -703,8 +703,12 @@ fn undirected_wires_accept_all_port_pairs_and_shared_terminal() {
         assert_eq!(f.path(&added["handle"]).first().unwrap()[0], 27.5);
         assert_eq!(dot_count(&f), 0);
         let l = wire(&f, f.port(1, b), f.port(2, "in"), json!([[62.5, by], [80., by], [80., 253.], [97.5, 253.]]));
-        f.link(l);
-        assert_eq!(dot_count(&f), 0, "No dots on a device terminal with multiple wires");
+        let second = f.link(l);
+        assert_eq!(dot_count(&f), 1, "Two wires on one terminal need one junction dot");
+        f.s.execute("electrical.unifilar.link.delete", &json!({"handle":second["handle"],"backup_dir":f.root})).unwrap();
+        assert_eq!(dot_count(&f), 0, "A lone terminal wire has no dot");
+        f.s.execute("u", &json!({})).unwrap();
+        assert_eq!(dot_count(&f), 1, "Undo restores the shared terminal dot");
         f.s.execute("electrical.unifilar.network.read", &json!({"model":f.model})).unwrap();
     }
 }
