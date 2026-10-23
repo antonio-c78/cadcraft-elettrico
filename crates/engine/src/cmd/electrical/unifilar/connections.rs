@@ -7,7 +7,11 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Mutex;
 const CMD: &str = "electrical.unifilar.link";
 const APP: &str = "CC_UNIFILARE_LINK";
+mod dots;
+mod splice;
+pub(super) use splice::splice;
 mod junctions;
+mod tracing;
 use junctions::{graph_read, ready_target};
 type PreviewCache = Arc<Mutex<Option<(String, std::result::Result<Vec<EntityKind>, String>)>>>;
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
@@ -24,6 +28,16 @@ pub struct Tap {
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Link {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub end_tap: Option<Tap>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pe_x: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pe_start: Option<f64>,
+    #[serde(default)]
+    pub route_mode: tracing::RouteMode,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub segment_modes: Vec<tracing::RouteMode>,
     pub version: u8,
     pub kind: String,
     pub from: Option<Port>,
@@ -42,6 +56,12 @@ pub struct Link {
 }
 #[derive(Clone)]
 pub struct Draft {
+    pub tracing: bool,
+    pub bend: bool,
+    pub trace_mode: tracing::RouteMode,
+    pub temporary_45: bool,
+    pub temporary_flip: bool,
+    trace_steps: Vec<usize>,
     pub link: Link,
     pub phase: u8,
     pub error: Option<String>,
@@ -64,6 +84,12 @@ impl Draft {
         describe(&self.link, &self.baseline)
     }
     pub fn instruction(&self) -> &'static str {
+        if self.tracing && self.phase == 0 {
+            return "Scegli un punto del simbolo, un filo o la barra PE.";
+        }
+        if self.tracing && self.phase == 9 {
+            return "Clicca per fissare il percorso; termina su un punto, un filo o il PE. Indietro elimina l’ultimo punto.";
+        }
         if self.phase == 3 {
             return "Controlla l'anteprima, poi conferma. Puoi tornare indietro.";
         }
@@ -138,8 +164,8 @@ pub(super) fn read_link(d: &Drawing, h: Handle) -> Result<Link> {
     Ok(link)
 }
 fn valid_link(l: &Link) -> bool {
-    [1, 2].contains(&l.version)
-        && ["series", "bus", "branch", "pe"].contains(&l.kind.as_str())
+    [1, 2, 3].contains(&l.version)
+        && ["series", "bus", "branch", "pe", "wire"].contains(&l.kind.as_str())
         && l.y.is_finite()
         && l.y.abs() <= 1000.
         && l.vertical_x.is_none_or(|x| x.is_finite() && x.abs() <= 1000.)
@@ -147,7 +173,7 @@ fn valid_link(l: &Link) -> bool {
         && [l.from.as_ref(), l.to.as_ref()].into_iter().flatten().all(|p| handle(&p.handle).is_ok() && ["in", "out", "pe"].contains(&p.port.as_str()))
         && l.bus.as_ref().is_none_or(|h| handle(h).is_ok())
         && l.tap.as_ref().is_none_or(|t| {
-            l.kind == "branch"
+            ["branch", "wire"].contains(&l.kind.as_str())
                 && l.bus.is_none()
                 && l.from.is_none()
                 && handle(&t.wire).is_ok()
@@ -155,6 +181,10 @@ fn valid_link(l: &Link) -> bool {
                 && t.fraction.is_finite()
                 && (0.0..=1.0).contains(&t.fraction)
         })
+        && l.end_tap.as_ref().is_none_or(tracing::valid_tap)
+        && l.pe_start.is_none_or(|x| x.is_finite() && x.abs() <= 1000.)
+        && l.pe_x.is_none_or(|x| x.is_finite() && x.abs() <= 1000.)
+        && l.segment_modes.len() <= 33
         && l.waypoints.len() <= 32
         && l.waypoints.iter().flatten().all(|v| v.is_finite() && v.abs() <= 1000.)
 }
@@ -196,8 +226,7 @@ impl Env {
                     }
                     if let Some(path) = env.paths.get(&e.handle) {
                         for pair in path.windows(2) {
-                            if ((pair[0].x-pair[1].x).abs()>1e-7 && (pair[0].y-pair[1].y).abs()>1e-7)
-                                || !block.entities.iter().any(|e|matches!(&e.kind,EntityKind::Line(l) if
+                            if !block.entities.iter().any(|e|matches!(&e.kind,EntityKind::Line(l) if
                                     (l.a.xy().near(pair[0],1e-6) && l.b.xy().near(pair[1],1e-6)) || (l.a.xy().near(pair[1],1e-6) && l.b.xy().near(pair[0],1e-6)))) {
                                 return Err(err("Il filo è stato modificato con comandi generici: annulla e usa Modifica collegamento."));
                             }
@@ -289,7 +318,7 @@ impl Env {
         Ok(env)
     }
     fn port(&self, p: &Port, id: &str) -> Result<Vec2> {
-        if p.port != id {
+        if id == "pe" && p.port != id {
             return Err(err(format!("Scegli il punto {id} previsto per questo collegamento.")));
         }
         let (at, role) = self
@@ -297,7 +326,7 @@ impl Env {
             .get(&handle(&p.handle)?)
             .and_then(|n| n.ports.get(&p.port))
             .ok_or_else(|| err("Punto assente: verifica i simboli collegati."))?;
-        if role != if id == "pe" { "pe" } else { "power" } {
+        if !["power", "pe"].contains(&role.as_str()) {
             return Err(err("Tipo di punto non compatibile."));
         }
         Ok(*at)
@@ -309,7 +338,7 @@ impl Env {
             .flat_map(|(h, n)| {
                 n.ports
                     .iter()
-                    .filter(move |(key, (_, role))| key.as_str() == id && role == if id == "pe" { "pe" } else { "power" })
+                    .filter(move |(key, (_, role))| (id != "pe" || key.as_str() == id) && ["power", "pe"].contains(&role.as_str()))
                     .map(move |(key, (at, _))| (p.dist(*at), Port { handle: h.hex(), port: key.clone() }))
             })
             .filter(|(dist, _)| *dist <= 4.0)
@@ -332,7 +361,7 @@ impl Env {
     }
     fn stub(&self, p: &Port, id: &str) -> Result<(Vec2, Vec2)> {
         let at = self.port(p, id)?;
-        let escape = at + Vec2::new(0.0, if id == "in" { 2.0 } else { -2.0 });
+        let escape = at + Vec2::new(0.0, if p.port == "in" { 2.0 } else { -2.0 });
         let own = handle(&p.handle)?;
         let boxes: Vec<_> = self.boxes.iter().filter(|o| !(o.owner == own && o.body)).map(|o| o.rect).collect();
         if routing::blocked(at, escape, &boxes) {
@@ -398,6 +427,9 @@ impl Env {
     fn geometry(&self, l: &Link) -> Result<(Vec<EntityKind>, Vec<Vec2>)> {
         let from = || l.from.as_ref().ok_or_else(|| err("Scegli il simbolo di partenza."));
         let to = || l.to.as_ref().ok_or_else(|| err("Scegli il simbolo di arrivo."));
+        if l.kind == "wire" {
+            return self.traced_geometry(l);
+        }
         let mut dot = None;
         let (points, bar) = match l.kind.as_str() {
             "series" => {
@@ -491,7 +523,15 @@ fn editable(d: &Drawing, h: Handle) -> Result<()> {
     Ok(())
 }
 fn store(d: &mut Drawing, target: Option<Handle>, l: &Link, geometry: Vec<EntityKind>, path: Vec<Vec2>) -> Result<Handle> {
-    let layer = if l.kind == "pe" { "UNI_PE" } else { "UNI_COLLEGAMENTI" };
+    let layer = if l.kind == "pe"
+        || l.pe_x.is_some()
+        || l.pe_start.is_some()
+        || [l.from.as_ref(), l.to.as_ref()].into_iter().flatten().any(|p| p.port == "pe")
+    {
+        "UNI_PE"
+    } else {
+        "UNI_COLLEGAMENTI"
+    };
     if d.layer(layer).is_some_and(|l| l.locked || l.frozen || !l.on) {
         return Err(err(format!("Attiva e sblocca {layer}.")));
     }
@@ -566,6 +606,7 @@ pub(super) fn refresh(d: &mut Drawing, layout: &schema::Layout) -> Result<()> {
     for (h, l, g, path) in ready {
         store(d, Some(h), &l, g, path)?;
     }
+    dots::rebuild(d)?;
     super::markers::refresh(d, layout)?;
     Ok(())
 }
@@ -584,8 +625,24 @@ fn describe(l: &Link, d: &Drawing) -> String {
             .map(|m| m["fields"]["sigla"].as_str().filter(|s| !s.is_empty()).or(m["name"].as_str()).unwrap_or("Apparecchio").to_string())
             .unwrap_or_else(|| "Apparecchio da verificare".into())
     };
-    let from = l.from.as_ref().map(name).unwrap_or_else(|| "Origine da scegliere".into());
-    let to = l.to.as_ref().map(name).unwrap_or_else(|| "Arrivo da scegliere".into());
+    let from = l.from.as_ref().map(name).unwrap_or_else(|| {
+        if l.tap.is_some() {
+            "Giunzione".into()
+        } else if l.pe_start.is_some() {
+            "PE".into()
+        } else {
+            "Origine da scegliere".into()
+        }
+    });
+    let to = l.to.as_ref().map(name).unwrap_or_else(|| {
+        if l.end_tap.is_some() {
+            "Giunzione".into()
+        } else if l.pe_x.is_some() {
+            "PE".into()
+        } else {
+            "Arrivo da scegliere".into()
+        }
+    });
     match l.kind.as_str() {
         "bus" => format!("Barra comune da {from}"),
         "pe" => format!("{from} → PE"),
@@ -600,7 +657,7 @@ pub fn has_port(d: &Drawing, h: Handle, id: &str) -> bool {
         .is_some_and(|p| p.iter().any(|v| v["id"] == id))
 }
 pub fn can_branch(d: &Drawing, h: Handle) -> bool {
-    read_link(d, h).is_ok_and(|l| l.kind != "pe")
+    read_link(d, h).is_ok()
 }
 pub fn is_bus(d: &Drawing, h: Handle) -> bool {
     read_link(d, h).is_ok_and(|l| l.kind == "bus")
@@ -612,7 +669,7 @@ fn read(s: &mut Session, p: &Value) -> Result<Value> {
     for _ in 0..256 {
         let before = children.len();
         for e in s.doc()?.model.iter().filter(|e| e.common.xdata.iter().any(|t| t.code == 1001 && t.value == APP)) {
-            if network::parent(&read_link(s.doc()?, e.handle)?)?.is_some_and(|p| children.contains(&p)) {
+            if network::parents(&read_link(s.doc()?, e.handle)?)?.iter().any(|p| children.contains(p)) {
                 children.insert(e.handle);
             }
         }
@@ -636,6 +693,11 @@ fn prepare(s: &mut Session, p: &Value) -> Result<Value> {
         read_link(s.doc()?, h)?
     } else {
         Link {
+            end_tap: None,
+            pe_x: None,
+            pe_start: None,
+            route_mode: tracing::RouteMode::default(),
+            segment_modes: Vec::new(),
             version: 2,
             kind: p["kind"].as_str().unwrap_or("series").into(),
             from: None,
@@ -649,17 +711,25 @@ fn prepare(s: &mut Session, p: &Value) -> Result<Value> {
             automatic: false,
         }
     };
+    let tracing = (p["trace"] == true && l.kind != "bus") || l.kind == "wire";
+    if tracing && target.is_none() {
+        l.kind = "wire".into();
+        l.version = 3;
+    }
     if let Some(raw) = p.get("link") {
         if raw.to_string().len() > 4096 {
             return Err(err("Dati troppo grandi."));
         }
         l = serde_json::from_value(raw.clone()).map_err(|_| err("Dati del collegamento non validi."))?;
     }
+    if tracing && target.is_some() && p.get("link").is_none() {
+        tracing::upgrade(&env, &mut l, target)?;
+    }
     if !valid_link(&l) {
         return Err(err("Tipo o dati del collegamento non validi."));
     }
     if let Some(h) = target {
-        if (read_link(s.doc()?, h)?.kind == "pe") != (l.kind == "pe") {
+        if l.kind != "wire" && (read_link(s.doc()?, h)?.kind == "pe") != (l.kind == "pe") {
             return Err(err("Mantieni lo stesso tipo di collegamento durante la modifica."));
         }
         if let Some(uid) = p.get("uid")
@@ -669,7 +739,8 @@ fn prepare(s: &mut Session, p: &Value) -> Result<Value> {
         }
         let _ = read_link(s.doc()?, h)?;
         editable(s.doc()?, h)?;
-    } else if p.get("link").is_none()
+    } else if !tracing
+        && p.get("link").is_none()
         && s.selection().len() == 1
         && let Some(h) = s.selection().first()
     {
@@ -697,6 +768,12 @@ fn prepare(s: &mut Session, p: &Value) -> Result<Value> {
     };
     let backup_dir = p.get("backup_dir").and_then(Value::as_str).filter(|s| s.len() <= 32768).map(str::to_string);
     s.unifilar_link = Some(Draft {
+        tracing: tracing || l.kind == "wire",
+        bend: false,
+        trace_mode: tracing::RouteMode::default(),
+        temporary_45: false,
+        temporary_flip: false,
+        trace_steps: Vec::new(),
         link: l,
         phase,
         error: None,
@@ -786,7 +863,7 @@ fn delete(s: &mut Session, p: &Value) -> Result<Value> {
         let count = remove.len();
         for e in doc.model.iter().filter(|e| e.common.xdata.iter().any(|t| t.code == 1001 && t.value == APP)) {
             let link = read_link(&doc, e.handle)?;
-            if network::parent(&link)?.is_some_and(|p| remove.contains(&p)) && !remove.contains(&e.handle) {
+            if network::parents(&link)?.iter().any(|p| remove.contains(p)) && !remove.contains(&e.handle) {
                 remove.push(e.handle);
             }
         }
@@ -810,6 +887,7 @@ fn delete(s: &mut Session, p: &Value) -> Result<Value> {
         editable(&doc, *h)?;
         doc.remove_entity(*h);
     }
+    dots::rebuild(&mut doc)?;
     let backup = backup(s.doc()?, p["backup_dir"].as_str())?;
     *s.doc_mut()? = doc;
     Ok(json!({"deleted":remove.len(),"backup":backup}))
@@ -819,6 +897,9 @@ pub fn snap_port(s: &Session, p: Vec2, tol: f64) -> Option<Vec2> {
         return None;
     }
     let d = current(s).ok()?;
+    if d.tracing {
+        return d.trace_snap(p, tol.max(1.));
+    }
     let id = match (d.link.kind.as_str(), d.phase) {
         ("pe", 0) => "pe",
         ("branch", 0) => return d.env.pick_tap(&d.baseline, p, tol.max(1.)).map(|v| v.1),
@@ -844,6 +925,9 @@ pub fn snap_port(s: &Session, p: Vec2, tol: f64) -> Option<Vec2> {
 fn point(d: &mut Draft, p: Vec2) -> Result<()> {
     if !p.is_finite() {
         return Err(err("Punto non valido."));
+    }
+    if d.tracing && [0, 9].contains(&d.phase) {
+        return d.trace_point(p);
     }
     if d.phase == 0 {
         let port = if d.link.kind != "branch" { d.env.choose(p, if d.link.kind == "pe" { "pe" } else { "out" }).ok() } else { None };
@@ -996,7 +1080,21 @@ impl Interactive for Place {
     }
     fn prompt(&self, s: &Session) -> Prompt {
         let text = s.unifilar_link.as_ref().map(|d| d.error.as_deref().unwrap_or(d.instruction())).unwrap_or("Avvia un collegamento.");
-        Prompt::new(text, Accept::POINT).kw(&["Indietro", "Origine", "Destinazione", "Percorso", "Verticale", "Punti", "Automatico", "Tratto"])
+        Prompt::new(text, Accept::POINT).kw(&[
+            "Undo",
+            "Indietro",
+            "Origine",
+            "Destinazione",
+            "Percorso",
+            "Verticale",
+            "Punti",
+            "Automatico",
+            "Tratto",
+            "Ortogonale",
+            "Diagonale",
+            "Libera",
+            "Piega",
+        ])
     }
     fn input(&mut self, s: &mut Session, input: Input) -> Result<Step> {
         match input {
@@ -1038,6 +1136,10 @@ impl Interactive for Place {
             Input::Keyword(k) => {
                 let mut d = current(s)?.clone();
                 let key = k.to_lowercase();
+                if d.tracing && d.trace_keyword(&key)? {
+                    s.unifilar_link = Some(d);
+                    return Ok(Step::Continue);
+                }
                 if ["punti", "automatico", "tratto"].contains(&key.as_str()) && (d.phase < 2 || d.link.kind == "bus") {
                     return Err(err("Completa prima la scelta dei terminali."));
                 }
@@ -1089,8 +1191,14 @@ impl Interactive for Place {
                 let mut d = current(s)?.clone();
                 match point(&mut d, p) {
                     Ok(()) => {
+                        let done = d.tracing && d.phase == 3;
                         s.unifilar_link = Some(d);
-                        Ok(Step::Continue)
+                        if done {
+                            commit(s)?;
+                            Ok(Step::Done)
+                        } else {
+                            Ok(Step::Continue)
+                        }
                     }
                     Err(e) => {
                         d.error = Some(match &e {
@@ -1109,6 +1217,9 @@ impl Interactive for Place {
         let Ok(d) = current(s) else {
             return vec![];
         };
+        if d.tracing && [0, 9].contains(&d.phase) {
+            return d.trace_preview(cursor);
+        }
         if d.phase <= 1 {
             let id = if d.phase == 1 {
                 "in"
@@ -1188,7 +1299,7 @@ pub(crate) fn validate_erase(d: &Drawing, selected: &[Handle]) -> Result<()> {
     for e in d.model.iter().filter(|e| !removed.contains(&e.handle)) {
         if e.common.xdata.iter().any(|t| t.code == 1001 && t.value == APP) {
             let l = read_link(d, e.handle)?;
-            if network::parent(&l)?.is_some_and(|h| removed.contains(&h))
+            if network::parents(&l)?.iter().any(|h| removed.contains(h))
                 || [l.from.as_ref(), l.to.as_ref()].into_iter().flatten().any(|p| Handle::parse_hex(&p.handle).is_some_and(|h| removed.contains(&h)))
             {
                 return Err(err(

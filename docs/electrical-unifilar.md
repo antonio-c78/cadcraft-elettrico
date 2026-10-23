@@ -29,17 +29,85 @@ Opening a recognized unifilar sheet initializes a view-only grid per drawing, in
 
 Vertical placement snaps to the major horizontal rows automatically. The standard minor Y spacing is 2.5 mm and GRIDMAJOR is normally 5, so placement rows are 12.5 mm apart from Y=0. Major-row coloring uses drawing coordinates rather than renumbering the coarsened grid when zoom changes. F9 toggles this sheet's snap independently of plan drawings. X is not quantized by this vertical snap; device placement uses the shared column axis described below. Exact object snaps have precedence, and typed coordinates remain exact. Manual SNAPUNIT Y edits adjust the sheet's minor Y spacing to keep major rows and snap aligned.
 
-## Attached connections
+## Attached connections: point-by-point tracing (version 3)
 
-`Collega simboli`, `Barra di distribuzione`, `Derivazione da filo o barra` and `Collega al PE` use explicit symbol ports and persistent reference handles. A floating, movable guide shows the current step, port circles, preview, Back/Change controls and a final confirmation. No geometry is committed until confirmation. Bars have two independent endpoints; their feeding path can pass around the source's column. The same guide edits existing connections from their context menu. Connection deletion has a separate confirmation; deleting a bus explicitly includes its branches and attached markers.
+The native Connect, Branch and PE actions now share one point-by-point tracing command.
+Click a visible symbol anchor, native wire or PE bar; click intermediate points to fix
+bends; click a final anchor, wire or PE bar to commit. Aligned devices require exactly
+two clicks. Escape cancels the draft; Backspace / Indietro / Undo removes the last
+clicked waypoint group. A completed wire and all dependent updates have one Undo step
+and a full drawing backup. Incomplete/invalid drafts never change drawing entities.
 
-Series connections join `out` to `in`; branches join an explicit point on a wire or bus to `in`; PE connections require an explicit `pe` port and terminate exactly on the existing lower PE bar. One incoming power connection is allowed per device. Multiple loads may share an output, a bus, or explicit wire junctions. Power cycles, duplicate inputs and incompatible ports are rejected. Ports absent from the approved catalog must be reviewed rather than invented. Junction dots are generated at actual branches and PE joins. Crossings do not connect circuits; collinear overlap between different networks is forbidden.
+IN and OUT are anchor identities, not enforced directions. OUT-IN, IN-OUT, IN-IN,
+OUT-OUT, fan-out and multiple connections at a terminal are supported. The drafter
+owns electrical correctness. An electrical loop is allowed; a circular *geometric
+reference* between wire-owned taps is rejected because it cannot be refreshed.
 
-The bounded Manhattan visibility router avoids conservative rectangles around native device graphics and labels, prefers the chosen horizontal routing level and caps route complexity. `electrical.unifilar.link.prepare/place` stage the guide; `.insert` accepts a complete version-1 or version-2 `link` (`kind`, optional `from`/`to` port references, `bus`, `span`, `y`); `.read` and `.delete` expose the native objects. Connections are ordinary DXF block references on `UNI_COLLEGAMENTI` or `UNI_PE` with chunked `CC_UNIFILARE_LINK` metadata and an owner handle. Related edits, marker updates and a complete drawing backup are atomic and share one Undo step.
+The guide offers Orthogonal (default), 45 degrees and Free modes. Hold Shift for a
+temporary octilinear leg and Ctrl to invert its bend; the buttons provide the same
+choices. Each fixed leg retains its mode independently, so mixing orthogonal,
+diagonal and free legs does not change previously drawn geometry. The last two modes
+preserve exact endpoints; a diagonal mode may add an orthogonal leg to reach them.
+The preview uses the same leg builder as commit. Native symbol/text envelopes are
+obstacles even for diagonals; clicking a blocked route reports it so another waypoint
+can be chosen, rather than silently changing the drawn path.
 
-Use `Modifica apparecchio` / `Sposta / cambia colonna` to move connected devices. Attached paths update together and table data stays in its proper column. Removing a required port, a route that no longer fits, or a marker that no longer fits its segment rejects the whole edit. Generic MOVE/ROTATE/SCALE/COPY do not maintain these attachments and are detected when reading/editing; Undo restores the native object. Use `Elimina collegamento` for dependency-aware deletion; multi-sheet continuation and electrical calculations are outside this phase.
+Snap priority is symbol anchors, projections onto native wires, then the normal CAD
+grid. Plain CAD lines are graphics, not electrical conductors. Start and finish may
+both be taps. A tap is explicit: `wire`, `part: route|bar`, `fraction: 0..1` along its
+owner's arc length. Crossing geometry alone never merges networks. A tap follows the
+owner's rebuilt path; wire-owned dependencies refresh in parent-first order.
 
-For series between different columns, the guide asks for origin, destination, horizontal routing height, then the vertical passage. The default rise is centered between the two column axes; Enter or `Mantieni posizione proposta` keeps that midpoint, while a fourth point overrides only its X coordinate. `Cambia altezza` and `Cambia passaggio verticale` remain available in the edit guide. Aligned connections skip the extra step. An optional `vertical_x` in link metadata stores a manual passage; absent/null preserves automatic midpoint behavior, including after native device moves. The constrained rise and its upper horizontal return must clear device and label rectangles; an invalid choice leaves the guide open for correction. A final confirmation is still required before any geometry changes.
+Junction dots are derived after insert, reroute, native device move and wire deletion.
+An explicit junction with at least three distinct wire directions gets one dot;
+bends and simple two-leg continuations do not. Device anchors never get dots, even
+with several wires. PE-bar attachments get a dot. Deleting a branch recomputes the
+remaining junctions. Coincident collinear paths are not automatically consolidated:
+use a shared trunk and explicit branches for an unambiguous drawing.
+
+`Modifica collegamento` offers redraw path, change start and move a segment. Native
+`Modifica apparecchio` / `Sposta / cambia colonna` maintains port attachments and
+rebuilds legs between retained anchors using their constraints. A collision or missing
+port rejects the whole change. Generic MOVE/ROTATE/SCALE/COPY do not maintain native
+metadata; use the electrical actions and Undo if a generic transform is detected.
+
+Inserting a new two-terminal device with IN and OUT exactly on one existing route
+splits it into two native wires attached to those ports. Outer endpoints and external
+taps/line markers retain their positions; references on the downstream half are
+remapped. A junction/marker in the space consumed by the new device, ambiguous
+multiple wires, or excessive route complexity rejects the insertion atomically.
+It does not assume power-flow direction: the earlier point along the route may be OUT.
+Updating an existing device is not an implicit splice operation.
+
+### Storage and extension points
+
+`connections.rs` owns transactions, validation, compatibility and interactive dispatch;
+`network.rs` owns undirected components and bounded geometric dependencies;
+`connections/tracing.rs` owns endpoint picking and leg constraints;
+`routing.rs` owns geometric collision/leg utilities and the legacy automatic router;
+`connections/dots.rs` derives junction marks; `connections/splice.rs` splits routes
+and remaps dependents. The egui guide only invokes engine commands and supplies
+transient Shift/Ctrl state. Future tools can reuse topology without depending on UI.
+
+`electrical.unifilar.link.prepare {model, trace:true}` stages native tracing;
+`.place` runs its prompt. Programmatic `.insert {model, link, backup_dir}` accepts
+v3 `kind: wire`, one start (`from`, `tap`, or `pe_start`) and one finish (`to`,
+`end_tap`, or `pe_x`), plus `waypoints`, `route_mode` and optional `segment_modes`.
+Port references contain `{handle, port}`. Routes use `orthogonal`, `diagonal`, `free`.
+`electrical.unifilar.network.read {model}` returns ports, both endpoint references,
+explicit junctions and canonical undirected component identities. PE joins are explicit,
+not inferred from the type or name of a device.
+
+Wire blocks remain ordinary DXF INSERTs with chunked `CC_UNIFILARE_LINK` metadata on
+UNI_COLLEGAMENTI or UNI_PE. Opening does not migrate drawings. Version-1/2 routes
+remain readable and their programmatic API retains its historical directed validation.
+Explicit native editing upgrades a non-bus legacy route to v3; Undo restores it.
+Distribution bars retain their existing two-endpoint guide and legacy automatic router.
+
+Bounds remain 128 devices, 256 links, 32 fixed anchors per link, 128 route vertices,
+8192 wire segments and 2048 obstacle rectangles. Inter-sheet references, automated
+whole-circuit moves, automatic obstacle rerouting for hand-traced paths, automatic
+merging of overlapping wires, and electrical calculations remain separate features.
 
 ## Category data and shared columns
 
@@ -69,41 +137,11 @@ legacy_fields when an existing device is explicitly edited; opening a drawing
 does not rewrite it. Short editable type defaults fit the centered columns.
 
 
-## Junction network and route editing (version 2)
+## Historical v1/v2 automatic router
 
-Topology lives in `network.rs`, independently of the Manhattan router and guide.
-A v2 branch stores `tap: {wire, part: "route"|"bar", fraction: 0..1}` instead
-of `from`/`bus`. Its junction follows the parent path by normalized arc length.
-A branch can itself have children. A bounded dependency order refreshes parents
-before their children, preserving reference handles and markers. Opening a v1
-sheet does not rewrite it; existing port and bus references remain readable.
-`electrical.unifilar.network.read {model}` returns ports, wires, explicit
-junctions and source-net identities for future tools. An intersection alone
-never creates a junction or merges two networks. PE stays a separate network.
-
-The main Connect command accepts either a source output or a projected point
-on an existing visible native wire. A free same-axis connection proceeds from
-two endpoint clicks directly to confirmation. Tapped branches propose a compact
-orthogonal route automatically. Cross-column port connections retain the guided
-height and midpoint passage, with manual override. Every preview and commit
-uses the same candidate environment without the edited wire's stale geometry.
-
-The guide offers automatic routing, up to 32 fixed waypoints, and Move segment:
-select a segment then its new position. Fixed coordinates survive device moves;
-only paths between anchors and the terminal stubs are recalculated. All paths
-remain orthogonal, avoid symbol/text rectangles, and stay above PE unless they
-are PE connections. A failed edit leaves the original drawing unchanged.
-Deleting a wire with descendants requires explicit cascade confirmation; deleting
-one leaf leaves siblings intact. Dots belong to their branch and disappear with
-it; shared junctions remain visible while another child still owns them.
-
-Bounds: 128 devices, 256 links, 32 fixed anchors per link, 128 route vertices,
-8192 wire segments and 2048 obstacle rectangles. Simple routes use cheap
-validated candidates before the bounded 40000-point visibility grid. Power-feed
-cycles and duplicate inputs are still rejected; inter-sheet references, arbitrary
-plain CAD lines as electrical conductors, and electrical calculations are outside
-this release. Use native device/connection edits rather than generic transforms.
-
-Synthetic regressions cover the illustrated vertical trunk and lamp branch,
-nested junctions, v1 compatibility, v2 DXF round trips, device relocation, Undo,
-manual segment movement, fixed anchors, dependent deletion and malformed data.
+Legacy series, bus, branch and PE objects still load without rewriting. The bounded
+Manhattan visibility router remains available through their programmatic API; it keeps
+its horizontal-level/midpoint passage options, automatic detours and old fixed-point
+form. Native explicit editing upgrades non-bus objects to the v3 point tracer above.
+The directed electrical checks in this legacy input format are compatibility behavior,
+not the policy of the new native drawing command.

@@ -30,6 +30,9 @@ pub(super) fn command(app: &mut CadApp, id: &str, p: &Value) -> Result<Value, St
         _ => "series",
     };
     params["kind"] = json!(kind);
+    if kind != "bus" {
+        params["trace"] = json!(true);
+    }
     app.run("electrical.unifilar.link.prepare", params)?;
     app.start("electrical.unifilar.link.place");
     app.elettrico.unifilar_connections.placing = true;
@@ -62,22 +65,40 @@ pub(super) fn show(app: &mut CadApp, ctx: &egui::Context) {
             .show(ctx, |ui| {
                 ui.heading(d.description());
                 ui.label(d.instruction());
+                if d.tracing {
+                    ui.label(format!("Modalità: {}", d.trace_mode_label()));
+                    ui.horizontal_wrapped(|ui| {
+                        for (label, key) in [("Ortogonale", "Ortogonale"), ("45°", "Diagonale"), ("Libera", "Libera"), ("Inverti piega", "Piega")] {
+                            if ui.button(label).clicked() {
+                                action = Some(key);
+                            }
+                        }
+                    });
+                    ui.label("Maiusc: 45° temporaneo · Ctrl: inverti piega · Indietro: ultimo punto");
+                }
                 ui.label(if d.phase <= 1 {
                     "I cerchi evidenziano i punti utilizzabili. Esc annulla."
                 } else {
                     "Controlla il percorso nel disegno. Esc annulla."
                 });
-                if (2..=5).contains(&d.phase) && d.link.kind != "pe" && !d.simple_vertical() && !d.link.automatic && d.link.waypoints.is_empty() {
+                if !d.tracing
+                    && (2..=5).contains(&d.phase)
+                    && d.link.kind != "pe"
+                    && !d.simple_vertical()
+                    && !d.link.automatic
+                    && d.link.waypoints.is_empty()
+                {
                     let y = if d.phase == 2 { app.canvas.cursor.map(|p| p.y).unwrap_or(d.link.y) } else { d.link.y };
                     ui.label(format!("Altezza percorso: {y:.2} mm · scatto verticale F9"));
                 }
-                if !d.simple_vertical()
+                if !d.tracing
+                    && !d.simple_vertical()
                     && !d.link.automatic
                     && let Some(x) = d.proposed_vertical_x()
                 {
                     ui.label(format!("Passaggio verticale proposto: X {x:.2} mm"));
                 }
-                if d.simple_vertical() {
+                if !d.tracing && d.simple_vertical() {
                     ui.label("Collegamento verticale diretto: nessuna posizione da impostare.");
                 }
                 if d.phase == 6 {
@@ -91,7 +112,18 @@ pub(super) fn show(app: &mut CadApp, ctx: &egui::Context) {
                     if ui.add_enabled(d.phase > 0, egui::Button::new("Indietro")).clicked() {
                         action = Some("Indietro");
                     }
-                    if d.phase == 3 {
+                    if d.tracing && d.phase == 3 {
+                        if ui.button("Ridisegna percorso").clicked() {
+                            action = Some("Punti");
+                        }
+                        if ui.button("Cambia partenza").clicked() {
+                            action = Some("Origine");
+                        }
+                        if ui.button("Sposta un tratto...").clicked() {
+                            action = Some("Tratto");
+                        }
+                    }
+                    if !d.tracing && d.phase == 3 {
                         if ui.button("Cambia origine").clicked() {
                             action = Some("Origine");
                         }
@@ -110,7 +142,7 @@ pub(super) fn show(app: &mut CadApp, ctx: &egui::Context) {
                     }
                 });
                 ui.horizontal_wrapped(|ui| {
-                    if d.phase == 3 && d.link.kind != "bus" {
+                    if !d.tracing && d.phase == 3 && d.link.kind != "bus" {
                         if ui.button("Percorso automatico").clicked() {
                             action = Some("Automatico");
                         }

@@ -1195,6 +1195,12 @@ fn effective_point(app: &mut CadApp, raw: Vec2, xf: &Xf, ctx: &egui::Context) ->
         }
         return raw;
     }
+    if let Some(d) = &mut app.session.unifilar_link
+        && d.tracing
+    {
+        d.temporary_45 = ctx.input(|i| i.modifiers.shift);
+        d.temporary_flip = ctx.input(|i| i.modifiers.ctrl);
+    }
     let (now, shift) = ctx.input(|i| (i.time, i.modifiers.shift));
     let q =
         snap::tracking::CursorQuery { base, deferred, corner, aperture: app.session.settings.aperture / xf.scale, tol: 6.0 / xf.scale, now, shift };

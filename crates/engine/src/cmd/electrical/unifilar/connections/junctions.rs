@@ -3,10 +3,7 @@ use super::*;
 impl Env {
     fn tap_path(&self, t: &Tap) -> Result<Vec<Vec2>> {
         let h = handle(&t.wire)?;
-        let wire = self.links.get(&h).ok_or_else(|| err("Il filo della giunzione non esiste più."))?;
-        if wire.kind == "pe" {
-            return Err(err("Per il PE usa il collegamento dedicato."));
-        }
+        let _wire = self.links.get(&h).ok_or_else(|| err("Il filo della giunzione non esiste più."))?;
         if t.part == "bar" {
             let (bus, span) = self.bus(&t.wire)?;
             Ok(vec![Vec2::new(span[0], bus.y), Vec2::new(span[1], bus.y)])
@@ -62,7 +59,7 @@ impl Env {
         let mut best = None;
         let mut distance = tolerance;
         for (h, l) in &self.links {
-            if l.kind == "pe" || d.entity(*h).is_none_or(|e| !e.common.visible || d.layer(&e.common.layer).is_some_and(|l| !l.on || l.frozen)) {
+            if d.entity(*h).is_none_or(|e| !e.common.visible || d.layer(&e.common.layer).is_some_and(|l| !l.on || l.frozen)) {
                 continue;
             }
             for part in if l.kind == "bus" { &["route", "bar"][..] } else { &["route"][..] } {
@@ -148,6 +145,11 @@ pub(super) fn graph_read(s: &mut Session, p: &Value) -> Result<Value> {
         if let Some(p) = &l.to {
             env.port(p, "in")?;
         }
+        for t in l.end_tap.iter() {
+            let (at, _) = env.tap_point(t)?;
+            let id = format!("{}:{}:{:.9}", t.wire, t.part, t.fraction);
+            junctions.insert(id.clone(), json!({"id":id,"wire":t.wire,"part":t.part,"fraction":t.fraction,"at":[at.x,at.y]}));
+        }
         let junction = if let Some(t) = &l.tap {
             let (at, _) = env.tap_point(t)?;
             let id = format!("{}:{}:{:.9}", t.wire, t.part, t.fraction);
@@ -157,14 +159,14 @@ pub(super) fn graph_read(s: &mut Session, p: &Value) -> Result<Value> {
             None
         };
         wires.push(json!({"handle":h.hex(),"source":l.from,"junction":junction,"bus":l.bus,"destination":l.to,
-            "net":net(l,&env.links)?,"waypoints":l.waypoints,"automatic":l.automatic}));
+            "end_junction":l.end_tap,"pe_start":l.pe_start,"pe_x":l.pe_x,"net":net(l,&env.links)?,"waypoints":l.waypoints,"automatic":l.automatic}));
     }
     let ports: Vec<_> = env
         .nodes
         .iter()
         .flat_map(|(h, n)| n.ports.iter().map(move |(id, (at, role))| json!({"device":h.hex(),"port":id,"role":role,"at":[at.x,at.y]})))
         .collect();
-    Ok(json!({"version":2,"ports":ports,"wires":wires,"junctions":junctions.into_values().collect::<Vec<_>>()}))
+    Ok(json!({"version":3,"ports":ports,"wires":wires,"junctions":junctions.into_values().collect::<Vec<_>>()}))
 }
 
 /// Move one orthogonal segment; intermediate coordinates become explicit fixed anchors.
@@ -173,6 +175,37 @@ pub(super) fn shift_segment(d: &Draft, p: Vec2) -> Result<Link> {
     let mut path = d.editing_path.clone();
     let a = *path.get(index).ok_or_else(|| err("Tratto non disponibile."))?;
     let b = *path.get(index + 1).ok_or_else(|| err("Tratto non disponibile."))?;
+    if d.link.kind == "wire" {
+        let v = b - a;
+        let length = v.len();
+        if length < 1e-7 {
+            return Err(err("Tratto troppo corto."));
+        }
+        let normal = Vec2::new(-v.y, v.x) / length;
+        let offset = normal * (p - a).dot(normal);
+        if let Some(q) = path.get_mut(index) {
+            *q += offset;
+        }
+        if let Some(q) = path.get_mut(index + 1) {
+            *q += offset;
+        }
+        let mut link = d.link.clone();
+        link.waypoints.clear();
+        link.segment_modes.clear();
+        if index == 0 {
+            link.waypoints.push([path[0].x, path[0].y]);
+        }
+        link.waypoints.extend(path.iter().skip(1).take(path.len().saturating_sub(2)).map(|p| [p.x, p.y]));
+        if index + 2 == path.len()
+            && let Some(q) = path.last()
+        {
+            link.waypoints.push([q.x, q.y]);
+        }
+        if link.waypoints.len() > 32 {
+            return Err(err("Troppi vertici."));
+        }
+        return Ok(link);
+    }
     let vertical = (a.x - b.x).abs() < 1e-7;
     if let Some(q) = path.get_mut(index) {
         if vertical {

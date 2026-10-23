@@ -675,3 +675,150 @@ fn a_same_axis_tap_leaves_the_trunk_sideways_without_retracing_it() {
         }
     }
 }
+
+fn wire(f: &Fixture, a: Value, b: Value, points: Value) -> Value {
+    let _ = f;
+    json!({"version":3,"kind":"wire","from":a,"to":b,"y":200.,"waypoints":points,"route_mode":"diagonal"})
+}
+fn dot_count(f: &Fixture) -> usize {
+    f.s.doc()
+        .unwrap()
+        .model
+        .iter()
+        .filter_map(|e| match &e.kind {
+            EntityKind::Insert(i) if i.block.starts_with("CC_UNIFILARE_LINK_") => Some(i),
+            _ => None,
+        })
+        .map(|i| f.s.doc().unwrap().block(&i.block).unwrap().entities.iter().filter(|e| matches!(e.kind, EntityKind::Solid(_))).count() / 8)
+        .sum()
+}
+#[test]
+fn undirected_wires_accept_all_port_pairs_and_shared_terminal() {
+    for (a, b) in [("out", "in"), ("in", "out"), ("out", "out"), ("in", "in")] {
+        let mut f = fixture();
+        let ay = if a == "in" { 278. } else { 260. };
+        let by = if b == "in" { 253. } else { 235. };
+        let l = wire(&f, f.port(0, a), f.port(1, b), json!([[27.5, ay], [45., ay], [45., by], [62.5, by]]));
+        let added = f.link(l);
+        assert_eq!(f.path(&added["handle"]).first().unwrap()[0], 27.5);
+        assert_eq!(dot_count(&f), 0);
+        let l = wire(&f, f.port(1, b), f.port(2, "in"), json!([[62.5, by], [80., by], [80., 253.], [97.5, 253.]]));
+        f.link(l);
+        assert_eq!(dot_count(&f), 0, "No dots on a device terminal with multiple wires");
+        f.s.execute("electrical.unifilar.network.read", &json!({"model":f.model})).unwrap();
+    }
+}
+#[test]
+fn trace_vertical_two_clicks_commits_once_and_undo_restores() {
+    use cadcraft_engine::{Input, geom::Vec2};
+    let mut f = fixture();
+    f.s.execute("electrical.unifilar.insert", &json!({"model":f.model,"id":"dev","at":[62.5,210.],"fields":{},"backup_dir":f.root})).unwrap();
+    let before = f.s.state().unwrap().doc.clone();
+    f.s.execute("electrical.unifilar.link.prepare", &json!({"model":f.model,"trace":true,"backup_dir":f.root})).unwrap();
+    f.s.start("electrical.unifilar.link.place").unwrap();
+    f.s.input(Input::Point(Vec2::new(62.5, 238.))).unwrap();
+    assert_eq!(f.s.unifilar_link.as_ref().unwrap().phase, 9);
+    assert!(Arc::ptr_eq(&before, &f.s.state().unwrap().doc));
+    f.s.input(Input::Point(Vec2::new(62.5, 210.))).unwrap();
+    assert!(f.s.running.is_none());
+    assert_eq!(dot_count(&f), 0);
+    let g = f.s.execute("electrical.unifilar.network.read", &json!({"model":f.model})).unwrap();
+    let path = f.path(&g["wires"][0]["handle"]);
+    assert_eq!(path, vec![[62.5, 238.], [62.5, 210.]]);
+    f.s.execute("u", &json!({})).unwrap();
+    assert_eq!(f.s.doc().unwrap().model.len(), before.model.len());
+}
+#[test]
+fn taps_at_either_end_have_automatic_dots_removed_on_erase() {
+    let mut f = fixture();
+    let base = f.link(wire(&f, f.port(0, "out"), f.port(1, "in"), json!([[27.5, 260.], [45., 260.], [45., 253.], [62.5, 253.]])));
+    let l = json!({"version":3,"kind":"wire","from":f.port(2,"in"),"end_tap":{"wire":base["handle"],"part":"route","fraction":0.5},"y":270.,"waypoints":[[97.5,280.],[80.,280.],[80.,256.5]],"route_mode":"diagonal"});
+    let added = f.link(l);
+    assert_eq!(dot_count(&f), 1);
+    let graph = f.s.execute("electrical.unifilar.network.read", &json!({"model":f.model})).unwrap();
+    assert!(graph["wires"].as_array().unwrap().iter().any(|w| w["end_junction"].is_object()));
+    f.s.execute("electrical.unifilar.link.delete", &json!({"handle":added["handle"],"backup_dir":f.root})).unwrap();
+    assert_eq!(dot_count(&f), 0);
+    f.s.execute("u", &json!({})).unwrap();
+    assert_eq!(dot_count(&f), 1);
+}
+#[test]
+fn trace_diagonal_pe_roundtrip_and_click_backtracking() {
+    use cadcraft_engine::{Input, geom::Vec2};
+    let mut f = fixture();
+    f.s.execute("electrical.unifilar.link.prepare", &json!({"model":f.model,"trace":true,"backup_dir":f.root})).unwrap();
+    f.s.start("electrical.unifilar.link.place").unwrap();
+    f.s.input(Input::Point(Vec2::new(132.5, 225.5))).unwrap();
+    f.s.input(Input::Keyword("Diagonale".into())).unwrap();
+    f.s.input(Input::Point(Vec2::new(150., 200.))).unwrap();
+    assert!(f.s.unifilar_link.as_ref().unwrap().link.waypoints.len() >= 2);
+    f.s.input(Input::Keyword("Indietro".into())).unwrap();
+    assert!(f.s.unifilar_link.as_ref().unwrap().link.waypoints.is_empty());
+    f.s.input(Input::Point(Vec2::new(150., 161.))).unwrap();
+    assert!(f.s.running.is_none());
+    assert_eq!(dot_count(&f), 1);
+    let g = f.s.execute("electrical.unifilar.network.read", &json!({"model":f.model})).unwrap();
+    let h = g["wires"][0]["handle"].clone();
+    let path = f.path(&h);
+    assert!(path.windows(2).any(|p| (p[0][0] - p[1][0]).abs() > 1e-6 && ((p[0][0] - p[1][0]).abs() - (p[0][1] - p[1][1]).abs()).abs() < 1e-6));
+    let bytes = cadcraft_io::write(f.s.doc().unwrap(), "wire.dxf").unwrap();
+    let mut reopened = Session::empty();
+    reopened.open_drawing(cadcraft_io::read(&bytes, "wire.dxf").unwrap(), "reopened", None);
+    assert_eq!(reopened.execute("electrical.unifilar.link.read", &json!({"handle":h})).unwrap()["link"]["version"], 3);
+}
+#[test]
+fn wire_to_wire_join_is_symmetric_and_dependency_cycles_are_atomic() {
+    let mut f = fixture();
+    let a = f.link(wire(&f, f.port(0, "out"), f.port(1, "in"), json!([[27.5, 260.], [45., 260.], [45., 253.], [62.5, 253.]])));
+    let b = f.link(wire(&f, f.port(2, "out"), f.port(3, "in"), json!([[97.5, 235.], [115., 235.], [115., 242.], [132.5, 242.]])));
+    let c=f.link(json!({"version":3,"kind":"wire","tap":{"wire":a["handle"],"part":"route","fraction":0.5},"end_tap":{"wire":b["handle"],"part":"route","fraction":0.5},"y":220.,"waypoints":[[80.,256.5],[80.,270.],[125.,270.],[125.,239.25]],"route_mode":"diagonal"}));
+    assert_eq!(dot_count(&f), 2);
+    let g = f.s.execute("electrical.unifilar.network.read", &json!({"model":f.model})).unwrap();
+    let nets: Vec<_> = g["wires"].as_array().unwrap().iter().map(|v| v["net"].clone()).collect();
+    assert!(nets.iter().all(|n| n == &nets[0]));
+    let before = f.s.state().unwrap().doc.clone();
+    let mut update = f.s.execute("electrical.unifilar.link.read", &json!({"handle":a["handle"]})).unwrap();
+    update["model"] = json!(f.model);
+    update["link"]["from"] = Value::Null;
+    update["link"]["tap"] = json!({"wire":c["handle"],"part":"route","fraction":0.5});
+    assert!(f.s.execute("electrical.unifilar.link.insert", &update).is_err());
+    assert!(Arc::ptr_eq(&before, &f.s.state().unwrap().doc));
+}
+
+#[test]
+fn inserting_device_on_wire_splits_and_remaps_downstream_taps_atomically() {
+    let mut f = fixture();
+    let lower =
+        f.s.execute("electrical.unifilar.insert", &json!({"model":f.model,"id":"dev","at":[62.5,185.],"fields":{},"backup_dir":f.root})).unwrap();
+    let base = f.link(wire(&f, f.port(1, "out"), json!({"handle":lower["handle"],"port":"in"}), json!([])));
+    let branch=f.link(json!({"version":3,"kind":"wire","tap":{"wire":base["handle"],"part":"route","fraction":0.8},"to":f.port(2,"out"),"y":200.,"waypoints":[[80.,195.6],[80.,230.],[97.5,230.]],"route_mode":"orthogonal"}));
+    let before = f.s.state().unwrap().doc.clone();
+    let device =
+        f.s.execute("electrical.unifilar.insert", &json!({"model":f.model,"id":"dev","at":[62.5,220.],"fields":{},"backup_dir":f.root})).unwrap();
+    let graph = f.s.execute("electrical.unifilar.network.read", &json!({"model":f.model})).unwrap();
+    assert_eq!(graph["wires"].as_array().unwrap().len(), 3);
+    let left = f.s.execute("electrical.unifilar.link.read", &json!({"handle":base["handle"]})).unwrap();
+    assert_eq!(left["link"]["to"]["handle"], device["handle"]);
+    let moved = f.s.execute("electrical.unifilar.link.read", &json!({"handle":branch["handle"]})).unwrap();
+    assert_ne!(moved["link"]["tap"]["wire"], base["handle"]);
+    assert_eq!(f.path(&branch["handle"])[0], [62.5, 195.6]);
+    f.s.execute("u", &json!({})).unwrap();
+    assert_eq!(f.s.doc().unwrap().model.len(), before.model.len());
+}
+#[test]
+fn moved_trace_retains_port_attachments_and_octilinear_constraints() {
+    let mut f = fixture();
+    let l = f.link(wire(&f, f.port(0, "out"), f.port(1, "in"), json!([[27.5, 260.], [45., 260.], [45., 253.], [62.5, 253.]])));
+    let mut edit = f.s.execute("electrical.unifilar.read", &json!({"handle":f.devices[1]})).unwrap();
+    edit["model"] = json!(f.model);
+    edit["backup_dir"] = json!(f.root);
+    edit["at"] = json!([62.5, 220.]);
+    f.s.execute("electrical.unifilar.update", &edit).unwrap();
+    let p = f.path(&l["handle"]);
+    assert_eq!(p.last().copied(), Some([62.5, 220.]));
+    assert!(p.windows(2).all(|v| {
+        let dx = (v[1][0] - v[0][0]).abs();
+        let dy = (v[1][1] - v[0][1]).abs();
+        dx < 1e-6 || dy < 1e-6 || (dx - dy).abs() < 1e-6
+    }));
+}

@@ -306,6 +306,9 @@ pub fn keyboard(app: &mut CadApp, ctx: &egui::Context) {
                     app.cmd.buffer.clear();
                     app.session.cancel();
                 }
+                Key::Backspace if app.cmd.buffer.is_empty() && app.session.unifilar_link.as_ref().is_some_and(|d| d.tracing && d.phase == 9) => {
+                    let _ = app.cmdline("Indietro");
+                }
                 Key::Backspace => {
                     let press = KeyPress { repeat, plain: !(modifiers.alt || modifiers.ctrl || modifiers.command) };
                     let erase = backspace_erases(

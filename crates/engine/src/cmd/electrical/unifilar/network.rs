@@ -7,9 +7,18 @@ use std::collections::{BTreeMap, BTreeSet};
 fn err(message: &str) -> crate::EngineError {
     bad("electrical.unifilar.link", message)
 }
-pub(super) fn parent(l: &Link) -> Result<Option<Handle>> {
-    let text = l.tap.as_ref().map(|t| t.wire.as_str()).or(l.bus.as_deref());
-    text.map(|h| Handle::parse_hex(h).ok_or_else(|| err("Riferimento alla giunzione non valido."))).transpose()
+pub(super) fn parents(l: &Link) -> Result<Vec<Handle>> {
+    let mut out = Vec::new();
+    for text in [l.tap.as_ref().map(|t| t.wire.as_str()), l.bus.as_deref(), l.end_tap.as_ref().map(|t| t.wire.as_str())].into_iter().flatten() {
+        let h = Handle::parse_hex(text).ok_or_else(|| err("Riferimento alla giunzione non valido."))?;
+        if !out.contains(&h) {
+            out.push(h);
+        }
+    }
+    Ok(out)
+}
+fn parent(l: &Link) -> Result<Option<Handle>> {
+    Ok(parents(l)?.first().copied())
 }
 pub(super) fn source<'a>(l: &'a Link, links: &'a BTreeMap<Handle, Link>) -> Result<&'a Port> {
     let mut current = l;
@@ -30,11 +39,39 @@ pub(super) fn source<'a>(l: &'a Link, links: &'a BTreeMap<Handle, Link>) -> Resu
     Err(err("Troppi livelli di derivazione."))
 }
 pub(super) fn net(l: &Link, links: &BTreeMap<Handle, Link>) -> Result<(String, String)> {
-    if l.kind == "pe" {
-        return Ok(("PE".into(), "pe".into()));
+    // An undirected graph: port labels carry no power-flow semantics.
+    type Key = (String, String);
+    fn tokens(w: &Link) -> Result<Vec<Key>> {
+        let mut t: Vec<_> = [w.from.as_ref(), w.to.as_ref()].into_iter().flatten().map(|p| (p.handle.clone(), p.port.clone())).collect();
+        for h in parents(w)? {
+            t.push(("@wire".into(), h.hex()));
+        }
+        if w.kind == "pe" || w.pe_start.is_some() || w.pe_x.is_some() {
+            t.push(("PE".into(), "pe".into()));
+        }
+        Ok(t)
     }
-    let p = source(l, links)?;
-    Ok((p.handle.clone(), p.port.clone()))
+    let mut edges: BTreeMap<Key, Vec<Key>> = BTreeMap::new();
+    for (h, w) in links {
+        let root = ("@wire".into(), h.hex());
+        for t in tokens(w)? {
+            edges.entry(root.clone()).or_default().push(t.clone());
+            edges.entry(t).or_default().push(root.clone());
+        }
+    }
+    let mut pending = tokens(l)?;
+    let mut seen = BTreeSet::new();
+    while let Some(key) = pending.pop() {
+        if seen.insert(key.clone())
+            && let Some(next) = edges.get(&key)
+        {
+            pending.extend(next.iter().cloned());
+        }
+        if seen.len() > 2048 {
+            return Err(err("Rete troppo complessa."));
+        }
+    }
+    seen.into_iter().find(|k| k.0 != "@wire").ok_or_else(|| err("Il filo non ha terminali."))
 }
 pub(super) fn order(links: &BTreeMap<Handle, Link>) -> Result<Vec<Handle>> {
     if links.len() > 256 {
@@ -44,7 +81,7 @@ pub(super) fn order(links: &BTreeMap<Handle, Link>) -> Result<Vec<Handle>> {
     let mut result = Vec::new();
     for _ in 0..=links.len() {
         for (h, l) in links {
-            if !ready.contains(h) && parent(l)?.is_none_or(|p| ready.contains(&p)) {
+            if !ready.contains(h) && parents(l)?.iter().all(|p| ready.contains(p)) {
                 ready.insert(*h);
                 result.push(*h);
             }
@@ -61,6 +98,14 @@ pub(super) fn validate_graph(links: &BTreeMap<Handle, Link>) -> Result<()> {
     let mut pe = BTreeSet::new();
     let mut edges: BTreeMap<Handle, Vec<Handle>> = BTreeMap::new();
     for l in links.values() {
+        if l.kind == "wire" {
+            let start = usize::from(l.from.is_some()) + usize::from(l.tap.is_some()) + usize::from(l.pe_start.is_some());
+            let end = usize::from(l.to.is_some()) + usize::from(l.end_tap.is_some()) + usize::from(l.pe_x.is_some());
+            if start != 1 || end != 1 || l.bus.is_some() || l.span.is_some() {
+                return Err(err("Terminali del filo non validi."));
+            }
+            continue;
+        }
         let has_source = l.from.as_ref().is_some_and(|p| p.port == if l.kind == "pe" { "pe" } else { "out" });
         let has_target = l.to.as_ref().is_some_and(|p| p.port == "in");
         let shape = match l.kind.as_str() {

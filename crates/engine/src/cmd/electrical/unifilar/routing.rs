@@ -5,22 +5,43 @@ use std::collections::BinaryHeap;
 pub(super) type Rect = [f64; 4];
 pub(super) fn blocked(a: Vec2, b: Vec2, boxes: &[Rect]) -> bool {
     boxes.iter().any(|r| {
-        if (a.x - b.x).abs() < 1e-8 {
-            a.x > r[0] && a.x < r[2] && a.y.min(b.y) < r[3] && a.y.max(b.y) > r[1]
-        } else {
-            a.y > r[1] && a.y < r[3] && a.x.min(b.x) < r[2] && a.x.max(b.x) > r[0]
+        // Slab clipping works for horizontal, vertical and diagonal segments.
+        let mut lo: f64 = 0.;
+        let mut hi: f64 = 1.;
+        for (x, delta, min, max) in [(a.x, b.x - a.x, r[0] + 1e-8, r[2] - 1e-8), (a.y, b.y - a.y, r[1] + 1e-8, r[3] - 1e-8)] {
+            if delta.abs() < 1e-12 {
+                if x <= min || x >= max {
+                    return false;
+                }
+            } else {
+                let u = (min - x) / delta;
+                let v = (max - x) / delta;
+                lo = lo.max(u.min(v));
+                hi = hi.min(u.max(v));
+                if lo >= hi {
+                    return false;
+                }
+            }
         }
+        hi > 0. && lo < 1.
     })
 }
 pub(super) fn overlaps_wire(a: Vec2, b: Vec2, c: Vec2, d: Vec2) -> bool {
-    if (a.x - b.x).abs() < 1e-7 && (c.x - d.x).abs() < 1e-7 && (a.x - c.x).abs() < 0.15 {
-        a.y.max(b.y).min(c.y.max(d.y)) - a.y.min(b.y).max(c.y.min(d.y)) > 0.15
-    } else if (a.y - b.y).abs() < 1e-7 && (c.y - d.y).abs() < 1e-7 && (a.y - c.y).abs() < 0.15 {
-        a.x.max(b.x).min(c.x.max(d.x)) - a.x.min(b.x).max(c.x.min(d.x)) > 0.15
-    } else {
-        false
+    let v = b - a;
+    let n = v.len();
+    if n < 1e-7 {
+        return false;
     }
+    let cross = |u: Vec2, w: Vec2| u.x * w.y - u.y * w.x;
+    if cross(v, c - a).abs() / n > 0.15 || cross(v, d - a).abs() / n > 0.15 {
+        return false;
+    }
+    let u = v / n;
+    let x = (c - a).dot(u);
+    let y = (d - a).dot(u);
+    x.max(y).min(n) - x.min(y).max(0.) > 0.15
 }
+
 pub(super) fn simplify(points: Vec<Vec2>) -> Vec<Vec2> {
     let mut out: Vec<Vec2> = Vec::new();
     for p in points {
@@ -31,9 +52,7 @@ pub(super) fn simplify(points: Vec<Vec2>) -> Vec<Vec2> {
             let n = out.len();
             let a = out[n - 2];
             let b = out[n - 1];
-            if (b - a).dot(p - b) >= 0.
-                && (((a.x - b.x).abs() < 1e-7 && (b.x - p.x).abs() < 1e-7) || ((a.y - b.y).abs() < 1e-7 && (b.y - p.y).abs() < 1e-7))
-            {
+            if (b - a).dot(p - b) >= 0. && ((b - a).x * (p - b).y - (b - a).y * (p - b).x).abs() < 1e-7 {
                 out.pop();
             } else {
                 break;

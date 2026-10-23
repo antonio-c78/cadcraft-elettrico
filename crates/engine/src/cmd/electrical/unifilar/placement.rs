@@ -553,6 +553,9 @@ fn commit(s: &mut Session, p: Vec2) -> Result<Value> {
     } else {
         drawing.add(&Space::Model, common, kind)?
     };
+    if d.target.is_none() && d.symbol.kind == "device" {
+        super::connections::splice(&mut drawing, &d.layout, h)?;
+    }
     super::connections::refresh(&mut drawing, &d.layout)?;
     let backup = backup(s.doc()?, d.backup_dir.as_deref())?;
     *s.doc_mut()? = drawing;
