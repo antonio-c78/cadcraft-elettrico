@@ -788,16 +788,15 @@ impl crate::Session {
         if !raw.is_finite() {
             return CursorSnap { point: raw, ..Default::default() };
         }
-        if let Some(point) = crate::cmd::electrical::unifilar::connections::snap_port(self, raw, q.aperture) {
-            return CursorSnap {
-                point,
-                snap: Some(super::SnapHit { point, mode: mode::END, name: "Connessione", viewport: None, deferred: None }),
-                ..Default::default()
-            };
-        }
-        // Polar angles relative to the last segment when the base point is where it ends.
         let last = self.last_segment.filter(|(_, b)| q.base.is_some_and(|base| base.near(*b, 1e-9 * (1.0 + b.len())))).map(|(a, b)| a.angle_to(b));
         let cfg = TrackConfig::relative_to(&s, angbase, last);
+        if let Some(point) = crate::cmd::electrical::unifilar::connections::snap_port(self, raw, q.aperture) {
+            let hit = super::SnapHit { point, mode: mode::END, name: "Connessione", viewport: None, deferred: None };
+            let cand = candidate(&doc, &space, raw, Some(&hit), q.aperture, &cfg, q.base);
+            let wait = self.tracking.hover(cand, q.now, cfg.shift_acquire, q.shift);
+            self.tracking.last = None;
+            return CursorSnap { point, snap: Some(hit), track: None, wait };
+        }
         let osmode = s.osmode | if s.osnaphatch { mode::HATCH } else { 0 };
         let ix = crate::spatial::index(&doc, &space);
         let (hit, near_prims) = super::osnap_with_neighborhood(&doc, &space, &ix, raw, q.aperture, osmode, q.base, q.deferred);
@@ -822,7 +821,11 @@ impl crate::Session {
                 p = super::grid_snap(p, doc.header.snap_unit(), origin, angle);
             }
         }
-        if let Some(mut t) = self.tracking.track(&doc, &space, p, q.aperture, q.tol, &cfg, q.base) {
+        // Hand-traced electrical legs retain exact tracking levels even with sheet Y snap.
+        let electrical_trace = self.running.as_ref().is_some_and(|r| r.id == "electrical.unifilar.link.place")
+            && self.unifilar_link.as_ref().is_some_and(|d| d.tracing && d.phase == 9);
+        let tracking_point = if electrical_trace { raw } else { p };
+        if let Some(mut t) = self.tracking.track(&doc, &space, tracking_point, q.aperture, q.tol, &cfg, q.base) {
             // PolarSnap (SNAPTYPE 1): steps of POLARDIST, or of the snap X spacing when it is 0.
             let step = if s.polardist > 0.0 { s.polardist } else { s.snapunit.x };
             if s.snapmode

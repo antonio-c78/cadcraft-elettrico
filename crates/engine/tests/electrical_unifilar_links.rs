@@ -822,3 +822,126 @@ fn moved_trace_retains_port_attachments_and_octilinear_constraints() {
         dx < 1e-6 || dy < 1e-6 || (dx - dy).abs() < 1e-6
     }));
 }
+
+#[test]
+fn shared_vertical_prefix_is_trimmed_and_marks_the_actual_departure_in_both_directions() {
+    for reverse in [false, true] {
+        let mut f = fixture();
+        let lower =
+            f.s.execute("electrical.unifilar.insert", &json!({"model":f.model,"id":"dev","at":[62.5,185.],"fields":{},"backup_dir":f.root})).unwrap();
+        let base = f.link(wire(&f, f.port(1, "out"), json!({"handle":lower["handle"],"port":"in"}), json!([])));
+        let tap = json!({"wire":base["handle"],"part":"route","fraction":0.3});
+        // Original contact is Y222.1; the branch follows the parent down to Y215.
+        let mut l = json!({"version":3,"kind":"wire","tap":tap,"to":f.port(2,"out"),"y":215.,"waypoints":[[62.5,215.],[80.,215.],[80.,230.],[97.5,230.]],"route_mode":"orthogonal"});
+        if reverse {
+            l.as_object_mut().unwrap().remove("tap");
+            l.as_object_mut().unwrap().remove("to");
+            l["from"] = f.port(2, "out");
+            l["end_tap"] = tap;
+            l["waypoints"] = json!([[97.5, 230.], [80., 230.], [80., 215.], [62.5, 215.]]);
+        }
+        let added = f.link(l);
+        let path = f.path(&added["handle"]);
+        assert_eq!(if reverse { path.last() } else { path.first() }, Some(&[62.5, 215.]));
+        assert_eq!(dot_count(&f), 1);
+        let graph = f.s.execute("electrical.unifilar.network.read", &json!({"model":f.model})).unwrap();
+        assert_eq!(graph["junctions"][0]["at"], json!([62.5, 215.]));
+        f.s.execute("electrical.unifilar.link.delete", &json!({"handle":added["handle"],"backup_dir":f.root})).unwrap();
+        assert_eq!(dot_count(&f), 0);
+        f.s.execute("u", &json!({})).unwrap();
+        assert_eq!(dot_count(&f), 1);
+    }
+}
+#[test]
+fn electrical_tracing_uses_native_polar_and_acquired_point_guides() {
+    use cadcraft_engine::{
+        Input,
+        geom::Vec2,
+        snap::tracking::{CursorQuery, DWELL},
+    };
+    let mut f = fixture();
+    f.s.execute("setvar", &json!({"name":"OSMODE","value":0})).unwrap();
+    f.s.execute("setvar", &json!({"name":"SNAPUNIT","value":[0.5,12.5]})).unwrap();
+    f.s.execute("setvar", &json!({"name":"SNAPMODE","value":1})).unwrap();
+    f.s.settings.polarmode = true;
+    f.s.settings.otrack = true;
+    f.s.settings.polarang = std::f64::consts::FRAC_PI_4;
+    f.s.execute("electrical.unifilar.link.prepare", &json!({"model":f.model,"trace":true,"backup_dir":f.root})).unwrap();
+    f.s.start("electrical.unifilar.link.place").unwrap();
+    assert!(f.s.current_prompt().unwrap().base.is_none());
+    f.s.input(Input::Point(Vec2::new(62.5, 238.))).unwrap();
+    let base = f.s.current_prompt().unwrap().base;
+    assert_eq!(base, Some(Vec2::new(62.5, 238.)));
+    let guide_doc = f.s.state().unwrap().doc.clone();
+    let query = |now| CursorQuery { base, deferred: false, corner: false, aperture: 0.2, tol: 0.1, now, shift: false };
+    let horizontal = f.s.snap_cursor(Vec2::new(80., 238.04), &query(1.));
+    assert!(horizontal.track.is_some());
+    assert!((horizontal.point.y - 238.).abs() < 1e-6);
+    let diagonal = f.s.snap_cursor(Vec2::new(72.5, 248.04), &query(2.));
+    assert!(diagonal.track.is_some());
+    let d = diagonal.point - base.unwrap();
+    assert!((d.x - d.y).abs() < 1e-6);
+    f.s.settings.polarmode = false;
+    let target = Vec2::new(97.5, 250.);
+    assert!(f.s.snap_cursor(target, &query(3.)).snap.is_some());
+    f.s.snap_cursor(target, &query(3. + DWELL + 0.1));
+    let acquired = f.s.snap_cursor(Vec2::new(110., 250.04), &query(4.));
+    assert!(acquired.track.is_some());
+    assert!((acquired.point.y - 250.).abs() < 1e-6);
+    f.s.settings.otrack = false;
+    f.s.tracking.clear();
+    assert!(f.s.snap_cursor(Vec2::new(110., 250.04), &query(5.)).track.is_none());
+    assert!(Arc::ptr_eq(&guide_doc, &f.s.state().unwrap().doc));
+    f.s.input(Input::Point(Vec2::new(80., 220.))).unwrap();
+    assert_eq!(f.s.current_prompt().unwrap().base, Some(Vec2::new(80., 220.)));
+    f.s.input(Input::Keyword("Undo".into())).unwrap();
+    assert_eq!(f.s.current_prompt().unwrap().base, base);
+    // An abandoned API draft must not alter the normal CAD tracking/grid order.
+    let stale = f.s.unifilar_link.clone();
+    f.s.cancel();
+    f.s.unifilar_link = stale;
+    f.s.settings.polarmode = true;
+    f.s.tracking.clear();
+    assert!(f.s.snap_cursor(Vec2::new(80., 238.04), &query(6.)).track.is_none());
+}
+
+#[test]
+fn refreshing_an_older_overlapping_branch_marks_its_separation_before_explicit_edit_normalizes_it() {
+    use cadcraft_engine::{Input, doc::RawTag, geom::Vec2};
+    let mut f = fixture();
+    let lower =
+        f.s.execute("electrical.unifilar.insert", &json!({"model":f.model,"id":"dev","at":[62.5,185.],"fields":{},"backup_dir":f.root})).unwrap();
+    let base = f.link(wire(&f, f.port(1, "out"), json!({"handle":lower["handle"],"port":"in"}), json!([])));
+    let added=f.link(json!({"version":3,"kind":"wire","tap":{"wire":base["handle"],"part":"route","fraction":0.3},"to":f.port(2,"out"),"y":215.,"waypoints":[[62.5,215.],[80.,215.],[80.,230.],[97.5,230.]],"route_mode":"orthogonal"}));
+    let h = Handle::parse_hex(added["handle"].as_str().unwrap()).unwrap();
+    let e = f.s.doc().unwrap().entity(h).unwrap();
+    let EntityKind::Insert(i) = &e.kind else { panic!() };
+    let name = i.block.clone();
+    let mut meta: Value =
+        serde_json::from_str(&e.common.xdata.iter().filter(|t| t.code == 1000).map(|t| t.value.as_str()).collect::<String>()).unwrap();
+    meta["link"]["tap"]["fraction"] = json!(0.3);
+    meta["link"]["waypoints"].as_array_mut().unwrap().insert(0, json!([62.5, 215.]));
+    meta["link"]["segment_modes"] = json!([]);
+    meta["path"].as_array_mut().unwrap().insert(0, json!([62.5, 222.1]));
+    let mut b = f.s.doc().unwrap().block(&name).unwrap().as_ref().clone();
+    let raw_handle = f.s.doc_mut().unwrap().new_handle();
+    b.entities.push(Entity::new(raw_handle, EntityKind::Line(Line { a: Vec3::new(62.5, 222.1, 0.), b: Vec3::new(62.5, 215., 0.) })));
+    f.s.doc_mut().unwrap().blocks.insert(name.clone(), Arc::new(b));
+    f.s.doc_mut()
+        .unwrap()
+        .modify_entity(h, |e| {
+            e.common.xdata = vec![RawTag { code: 1001, value: "CC_UNIFILARE_LINK".into() }, RawTag { code: 1000, value: meta.to_string() }]
+        })
+        .unwrap();
+    let mut edit = f.s.execute("electrical.unifilar.read", &json!({"handle":f.devices[0]})).unwrap();
+    edit["model"] = json!(f.model);
+    edit["backup_dir"] = json!(f.root);
+    f.s.execute("electrical.unifilar.update", &edit).unwrap();
+    assert_eq!(f.path(&added["handle"])[0], [62.5, 222.1]);
+    let b = f.s.doc().unwrap().block(&name).unwrap();
+    assert!(b.entities.iter().any(|e| matches!(&e.kind,EntityKind::Solid(s) if s.corners[0].xy().near(Vec2::new(62.5,215.),1e-6))));
+    f.s.execute("electrical.unifilar.link.prepare", &json!({"model":f.model,"handle":h.hex(),"trace":true,"backup_dir":f.root})).unwrap();
+    f.s.start("electrical.unifilar.link.place").unwrap();
+    f.s.input(Input::Enter).unwrap();
+    assert_eq!(f.path(&added["handle"])[0], [62.5, 215.]);
+}

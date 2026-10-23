@@ -1,7 +1,7 @@
 //! Stable junction anchors and an inspectable, versioned logical network.
 use super::*;
 impl Env {
-    fn tap_path(&self, t: &Tap) -> Result<Vec<Vec2>> {
+    pub(super) fn tap_path(&self, t: &Tap) -> Result<Vec<Vec2>> {
         let h = handle(&t.wire)?;
         let _wire = self.links.get(&h).ok_or_else(|| err("Il filo della giunzione non esiste più."))?;
         if t.part == "bar" {

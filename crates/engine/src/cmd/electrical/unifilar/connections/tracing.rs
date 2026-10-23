@@ -172,7 +172,8 @@ impl Env {
         let path = self.traced_path(l, b)?;
         let mut g: Vec<_> = path.windows(2).map(|p| line(p[0], p[1])).collect();
         let a = self.start(l)?;
-        for (at, tap, pe) in [(a, l.tap.as_ref(), l.pe_start.is_some()), (b, l.end_tap.as_ref(), l.pe_x.is_some())] {
+        for (at, tap, pe, end) in [(a, l.tap.as_ref(), l.pe_start.is_some(), false), (b, l.end_tap.as_ref(), l.pe_x.is_some(), true)] {
+            let at = if let Some(t) = tap { contacts::junction(self, t, &path, end)? } else { at };
             if pe || (tap.is_some() && self.needs_dot(at)) {
                 g.extend(junction(at));
             }
@@ -181,6 +182,9 @@ impl Env {
     }
 }
 impl Draft {
+    pub fn tracking_base(&self) -> Option<Vec2> {
+        (self.tracing && self.phase == 9).then(|| self.trace_last().ok()).flatten()
+    }
     pub fn trace_mode_label(&self) -> &'static str {
         if self.temporary_45 { "45° · Maiusc" } else { self.trace_mode.label() }
     }

@@ -52,6 +52,13 @@ The preview uses the same leg builder as commit. Native symbol/text envelopes ar
 obstacles even for diagonals; clicking a blocked route reports it so another waypoint
 can be chosen, rather than silently changing the drawn path.
 
+Native POLAR (F10) and OTRACK (F11) remain available while tracing. The last fixed
+point supplies the native tracking base, including after Back/Undo; dwelling on an
+electrical anchor acquires it through the normal tracking mechanism. The drafter's
+configured polar angles and acquisition preferences are respected. Symbol/wire snaps
+still take precedence; away from objects, tracking uses the raw cursor so sheet Y snap
+does not suppress an exact horizontal or angular alignment guide.
+
 Snap priority is symbol anchors, projections onto native wires, then the normal CAD
 grid. Plain CAD lines are graphics, not electrical conductors. Start and finish may
 both be taps. A tap is explicit: `wire`, `part: route|bar`, `fraction: 0..1` along its
@@ -62,8 +69,13 @@ Junction dots are derived after insert, reroute, native device move and wire del
 An explicit junction with at least three distinct wire directions gets one dot;
 bends and simple two-leg continuations do not. Device anchors never get dots, even
 with several wires. PE-bar attachments get a dot. Deleting a branch recomputes the
-remaining junctions. Coincident collinear paths are not automatically consolidated:
-use a shared trunk and explicit branches for an unambiguous drawing.
+remaining junctions. A contiguous terminal run coincident with its explicitly attached parent belongs to
+the parent: new unreferenced branches trim that duplicate run and move their tap to the
+actual separation point. This works at either end, including diagonal runs and parent
+corners. Editing a leaf branch also normalizes it. Existing routes with dependent taps
+or markers retain their coordinates, with their derived dot shown at the actual
+separation point on refresh. Unrelated crossings or arbitrary overlapping networks are
+never merged by this rule.
 
 `Modifica collegamento` offers redraw path, change start and move a segment. Native
 `Modifica apparecchio` / `Sposta / cambia colonna` maintains port attachments and
@@ -85,6 +97,7 @@ Updating an existing device is not an implicit splice operation.
 `network.rs` owns undirected components and bounded geometric dependencies;
 `connections/tracing.rs` owns endpoint picking and leg constraints;
 `routing.rs` owns geometric collision/leg utilities and the legacy automatic router;
+`connections/contacts.rs` resolves shared terminal runs;
 `connections/dots.rs` derives junction marks; `connections/splice.rs` splits routes
 and remaps dependents. The egui guide only invokes engine commands and supplies
 transient Shift/Ctrl state. Future tools can reuse topology without depending on UI.

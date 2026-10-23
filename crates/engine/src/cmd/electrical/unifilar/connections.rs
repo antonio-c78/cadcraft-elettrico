@@ -7,6 +7,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Mutex;
 const CMD: &str = "electrical.unifilar.link";
 const APP: &str = "CC_UNIFILARE_LINK";
+mod contacts;
 mod dots;
 mod splice;
 pub(super) use splice::splice;
@@ -826,8 +827,25 @@ fn commit(s: &mut Session) -> Result<Value> {
     }
     let _ = drawing(&d, &d.link)?;
     let mut doc = s.doc()?.clone();
-    let (g, path) = candidate_geometry(&d, &d.link)?;
-    let h = store(&mut doc, d.target, &d.link, g, path)?;
+    let (_, raw_path) = candidate_geometry(&d, &d.link)?;
+    let mut can_normalize = true;
+    if let Some(target) = d.target {
+        for link in d.env.links.values() {
+            if network::parents(link)?.contains(&target) {
+                can_normalize = false;
+            }
+        }
+        for e in d.baseline.model.iter() {
+            if let Some(m) = placement::data(e, "CC_UNIFILARE_DEVICE")?
+                && m["line"] == target.hex()
+            {
+                can_normalize = false;
+            }
+        }
+    }
+    let link = if can_normalize { contacts::normalize(&d.env, &d.link, raw_path)? } else { d.link.clone() };
+    let (g, path) = candidate_geometry(&d, &link)?;
+    let h = store(&mut doc, d.target, &link, g, path)?;
     refresh(&mut doc, &d.layout)?;
     let backup = backup(s.doc()?, d.backup_dir.as_deref())?;
     *s.doc_mut()? = doc;
@@ -1080,7 +1098,8 @@ impl Interactive for Place {
     }
     fn prompt(&self, s: &Session) -> Prompt {
         let text = s.unifilar_link.as_ref().map(|d| d.error.as_deref().unwrap_or(d.instruction())).unwrap_or("Avvia un collegamento.");
-        Prompt::new(text, Accept::POINT).kw(&[
+        let base = s.unifilar_link.as_ref().and_then(Draft::tracking_base);
+        Prompt::new(text, Accept::POINT).base_opt(base).kw(&[
             "Undo",
             "Indietro",
             "Origine",

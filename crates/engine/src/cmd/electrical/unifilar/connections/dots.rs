@@ -6,6 +6,7 @@ pub(super) fn rebuild(d: &mut Drawing) -> Result<()> {
     let mut lines = Vec::new();
     let mut candidates = Vec::new();
     let mut ports = Vec::new();
+    let mut paths = BTreeMap::new();
     for e in d.model.iter() {
         if let Some(m) = placement::data(e, "CC_UNIFILARE_DEVICE")?
             && m["kind"] == "device"
@@ -29,17 +30,17 @@ pub(super) fn rebuild(d: &mut Drawing) -> Result<()> {
         if let Some(p) = path.first()
             && (l.tap.is_some() || l.kind == "branch")
         {
-            candidates.push((e.handle, Vec2::new(p[0], p[1]), false));
+            candidates.push((e.handle, Vec2::new(p[0], p[1]), false, false));
         }
         if let Some(p) = path.last()
             && (l.end_tap.is_some() || l.kind == "bus" || l.kind == "pe" || l.pe_x.is_some())
         {
-            candidates.push((e.handle, Vec2::new(p[0], p[1]), l.kind == "pe" || l.pe_x.is_some()));
+            candidates.push((e.handle, Vec2::new(p[0], p[1]), l.kind == "pe" || l.pe_x.is_some(), true));
         }
         if let Some(p) = path.first()
             && l.pe_start.is_some()
         {
-            candidates.push((e.handle, Vec2::new(p[0], p[1]), true));
+            candidates.push((e.handle, Vec2::new(p[0], p[1]), true, false));
         }
         let i = identity(e)?;
         let b = d.block(&i.block).ok_or_else(|| err("Geometria del filo assente."))?;
@@ -48,6 +49,7 @@ pub(super) fn rebuild(d: &mut Drawing) -> Result<()> {
                 lines.push((e.handle, l.a.xy(), l.b.xy()));
             }
         }
+        paths.insert(e.handle, path.into_iter().map(|p| Vec2::new(p[0], p[1])).collect::<Vec<_>>());
         links.insert(e.handle, l);
     }
     if links.len() > 256 || lines.len() > 8192 {
@@ -56,7 +58,23 @@ pub(super) fn rebuild(d: &mut Drawing) -> Result<()> {
     let nets: BTreeMap<_, _> = links.iter().map(|(h, l)| net(l, &links).map(|n| (*h, n))).collect::<Result<_>>()?;
     let mut marks: BTreeMap<Handle, Vec<Vec2>> = BTreeMap::new();
     let mut emitted = Vec::<Vec2>::new();
-    for (owner, at, pe) in candidates {
+    for (owner, mut at, pe, end) in candidates {
+        if let (Some(link), Some(path)) = (links.get(&owner), paths.get(&owner)) {
+            let tap = if end { link.end_tap.as_ref() } else { link.tap.as_ref() };
+            if let Some(tap) = tap {
+                let parent = if tap.part == "bar" {
+                    links.get(&handle(&tap.wire)?).and_then(|l| l.span.map(|s| vec![Vec2::new(s[0], l.y), Vec2::new(s[1], l.y)]))
+                } else {
+                    paths.get(&handle(&tap.wire)?).cloned()
+                };
+                if let Some(parent) = parent {
+                    let route: Vec<_> = if end { path.iter().rev().copied().collect() } else { path.clone() };
+                    if let Some((_, point)) = contacts::departure(&route, &parent) {
+                        at = point;
+                    }
+                }
+            }
+        }
         if ports.iter().any(|p| p.near(at, 1e-6)) || emitted.iter().any(|p| p.near(at, 1e-6)) {
             continue;
         }
