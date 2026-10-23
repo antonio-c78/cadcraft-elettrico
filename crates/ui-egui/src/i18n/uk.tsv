@@ -1400,3 +1400,9 @@
 	Place unifilar connection	Розмістити однолінійне з’єднання
 
 	Read unifilar network	Прочитати мережу однолінійної схеми
+	Edit catalog symbol in new drawing	Редагувати символ каталогу в новому кресленні
+	Read catalog symbol editor	Прочитати стан редактора символів каталогу
+	Set catalog symbol connection point	Встановити точку підключення символу каталогу
+	Choose catalog symbol connection point	Вибрати точку підключення символу каталогу
+	Save catalog symbol and return	Зберегти символ каталогу та повернутися
+	Cancel catalog symbol editor	Скасувати редагування символу каталогу

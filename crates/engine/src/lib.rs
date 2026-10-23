@@ -679,6 +679,7 @@ pub struct Session {
     pub unifilar_draft: Option<cmd::electrical::unifilar::placement::Draft>,
     pub unifilar_link: Option<cmd::electrical::unifilar::connections::Draft>,
     pub electrical_measure: Option<cmd::electrical::calibration::Pick>,
+    pub electrical_editor: Option<cmd::electrical::library_editor::Draft>,
 }
 
 impl Default for Session {
@@ -732,6 +733,7 @@ impl Session {
             electrical_measure: None,
             unifilar_draft: None,
             unifilar_link: None,
+            electrical_editor: None,
         }
     }
     pub fn new_drawing(&mut self, metric: bool) -> usize {

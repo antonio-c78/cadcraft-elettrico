@@ -10,6 +10,15 @@ use super::{
 use crate::CadApp;
 
 mod gallery;
+pub(super) fn invalidate(state: &mut State, path: &str) {
+    if state.path == path {
+        state.initialized = false;
+        state.open = false;
+    }
+}
+pub(super) fn can_edit_geometry(state: &State, path: &str) -> bool {
+    state.path != path || !state.dirty
+}
 
 #[derive(Default)]
 pub(super) struct State {
@@ -253,6 +262,13 @@ pub(super) fn show(app: &mut CadApp, ctx: &egui::Context) {
             });
             ui.separator();
             ui.horizontal(|ui| {
+                if ui
+                    .add_enabled(!state.dirty && state.selected.is_some(), egui::Button::new("Modifica geometria in nuova scheda…"))
+                    .on_hover_text("Salva prima eventuali modifiche agli attributi del catalogo.")
+                    .clicked()
+                {
+                    action = Some("geometry");
+                }
                 if ui.add_enabled(state.selected.is_some(), egui::Button::new("Duplica variante")).clicked()
                     && let Err(e) = state.duplicate()
                 {
@@ -291,6 +307,16 @@ pub(super) fn show(app: &mut CadApp, ctx: &egui::Context) {
         });
     state.open = open;
     app.elettrico.manager = state;
+    if action == Some("geometry") {
+        let state = &app.elettrico.manager;
+        let p = state.selected.and_then(|i| state.draft.components.get(i)).map(|c| json!({"catalog":state.path,"id":c.id}));
+        if let Some(p) = p
+            && let Err(e) = app.run("ui.elettrico.library.open", p)
+        {
+            app.elettrico.manager.message = Some(e);
+        }
+        return;
+    }
     if let Some(action) = action
         && let Err(e) = app.run("ui.elettrico.manager", json!({"action":action}))
     {

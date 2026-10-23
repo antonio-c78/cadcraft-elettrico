@@ -93,6 +93,9 @@ pub(super) fn command(app: &mut CadApp, id: &str, p: &Value) -> Result<Value, St
     let state = &app.elettrico.symbol;
     let factor = f64::from(state.scale) * f64::from(state.percent) / 100.0 / if state.meters { 1000.0 } else { 1.0 };
     let mut params = json!({"library":source,"layers":app.elettrico.catalog.extra.get("layers"),"symbol":{"id":c.id,"name":c.name,"block":c.block,"category":c.category,"factor":factor,"width_mm":c.width_mm,"height_mm":c.height_mm,"anchor":c.anchor}});
+    if let Some(origin) = c.extra.get("editor_origin") {
+        params["symbol"]["origin"] = origin.clone();
+    }
     if let Some(mut saved) = app.elettrico.symbol.editing.clone() {
         // Preserve the existing object's actual size, location, orientation and room identity.
         params["symbol"]["factor"] = saved["symbol"]["factor"].clone();

@@ -12,6 +12,7 @@ use crate::{Accept, Input, Interactive, Prompt, Result, Session, Step};
 pub mod calibration;
 mod edit;
 mod layers;
+pub mod library_editor;
 pub mod rooms;
 mod symbol;
 pub mod unifilar;
@@ -78,6 +79,7 @@ pub fn specs() -> Vec<CommandSpec> {
     commands.extend(rooms::specs());
     commands.extend(calibration::specs());
     commands.extend(unifilar::specs());
+    commands.extend(library_editor::specs());
     commands
 }
 

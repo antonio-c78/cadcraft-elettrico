@@ -43,6 +43,9 @@ impl CadApp {
     /// changes asks Save / Don't Save / Cancel first.
     pub fn request_close(&mut self, index: Option<usize>) {
         let i = index.unwrap_or(self.session.active);
+        if crate::elettrico::request_editor_close(self, i) {
+            return;
+        }
         match self.session.docs.get(i) {
             Some(d) => {
                 let uid = d.uid;
@@ -117,6 +120,13 @@ impl CadApp {
                 let r = r.and_then(|_| self.run("qsave", Value::Null));
                 let saved = r.is_ok() && self.doc_index(uid).and_then(|i| self.session.docs.get(i)).is_some_and(|d| !d.is_dirty());
                 match (saved, self.doc_index(uid)) {
+                    (_, None) if r.is_ok() => {
+                        if let Some(c) = &mut self.closing {
+                            c.queue.pop_front();
+                            c.asking = None;
+                        }
+                        self.advance_close();
+                    }
                     (true, Some(i)) => {
                         self.close_front(i);
                         self.advance_close();

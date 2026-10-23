@@ -8,6 +8,7 @@ mod calibration;
 mod catalog;
 pub(crate) mod context;
 mod edit;
+mod library_editor;
 mod manager;
 mod preview;
 mod rooms;
@@ -53,6 +54,7 @@ pub struct State {
     unifilar: unifilar::State,
     unifilar_browser: unifilar_browser::State,
     unifilar_connections: unifilar_connections::State,
+    library_editor: library_editor::State,
 }
 
 impl Default for State {
@@ -83,6 +85,7 @@ impl Default for State {
             unifilar: unifilar::State::default(),
             unifilar_browser: unifilar_browser::State::default(),
             unifilar_connections: unifilar_connections::State::default(),
+            library_editor: library_editor::State::default(),
         }
     }
 }
@@ -116,6 +119,9 @@ impl State {
 }
 
 pub fn route(app: &mut CadApp, id: &str, params: &Value) -> Option<Result<Value, String>> {
+    if let Some(result) = library_editor::route(app, id, params) {
+        return Some(result);
+    }
     if id.starts_with("ui.elettrico.unifilar.link.") {
         return Some(unifilar_connections::command(app, id, params));
     }
@@ -230,7 +236,16 @@ pub fn route(app: &mut CadApp, id: &str, params: &Value) -> Option<Result<Value,
     Some(Ok(json!({"open": *target})))
 }
 
+pub(crate) fn request_editor_close(app: &mut CadApp, index: usize) -> bool {
+    if !cadcraft_engine::cmd::electrical::library_editor::is_editor(&app.session, index) {
+        return false;
+    }
+    let _ = app.session.execute("document.switch", &json!({"index":index}));
+    let _ = library_editor::route(app, "close", &Value::Null);
+    true
+}
 pub fn show(app: &mut CadApp, ctx: &egui::Context) {
+    library_editor::show(app, ctx);
     unifilar::show(app, ctx);
     unifilar_browser::show(app, ctx);
     unifilar_connections::show(app, ctx);

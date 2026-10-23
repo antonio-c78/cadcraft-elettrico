@@ -185,6 +185,9 @@ fn form(ui: &mut egui::Ui, state: &mut State) -> Option<&'static str> {
     }
     let mut action = None;
     ui.horizontal(|ui| {
+        if state.editing.is_none() && ui.button("Modifica simbolo in nuova scheda…").clicked() {
+            action = Some("geometry");
+        }
         if state.editing.is_some() {
             if ui.button("Salva modifiche").clicked() {
                 action = Some("update");
@@ -417,7 +420,12 @@ pub(super) fn show(app: &mut CadApp, ctx: &egui::Context) {
     if let Some(action) = action {
         let result = (|| {
             let p = params(&state)?;
-            if action == "update" {
+            if action == "geometry" {
+                let model: Value = serde_json::from_slice(&catalog::read(&state.model, 524288)?).map_err(|e| e.to_string())?;
+                let parent = std::path::Path::new(&state.model).parent().unwrap_or(std::path::Path::new("."));
+                let file = model["catalog"].as_str().ok_or("Catalogo non configurato.")?;
+                app.run("ui.elettrico.library.open", json!({"catalog":parent.join(file),"id":p["id"]}))?;
+            } else if action == "update" {
                 app.run("electrical.unifilar.update", p)?;
             } else {
                 app.run("electrical.unifilar.prepare", p)?;

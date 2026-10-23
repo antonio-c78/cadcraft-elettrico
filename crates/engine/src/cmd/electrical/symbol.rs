@@ -11,6 +11,8 @@ pub struct Symbol {
     pub width_mm: f64,
     pub height_mm: f64,
     pub anchor: [f64; 2],
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub origin: Option<[f64; 2]>,
 }
 
 pub(super) fn specs() -> Vec<CommandSpec> {
@@ -75,7 +77,11 @@ pub(super) fn prepare(s: &mut Session, p: &Value) -> Result<Value> {
     );
     let ratio = (symbol.width_mm / bounds.width().max(1e-9)).min(symbol.height_mm / bounds.height().max(1e-9));
     let anchor = Vec2::new(bounds.width() * symbol.anchor[0], bounds.height() * symbol.anchor[1]);
-    let map = |p: Vec2| (p - bounds.min - anchor) * (ratio * symbol.factor);
+    if symbol.origin.is_some_and(|a| a.iter().any(|v| !v.is_finite() || v.abs() > 1000.0)) {
+        return Err(bad("electrical.symbol.prepare", "Origine del simbolo non valida."));
+    }
+    let origin = symbol.origin.map(|a| Vec2::new(a[0], a[1])).unwrap_or(bounds.min + anchor);
+    let map = |p: Vec2| (p - origin) * (ratio * symbol.factor);
     let mut geometry = Vec::new();
     for primitive in &list.prims {
         let start = primitive.start as usize;
