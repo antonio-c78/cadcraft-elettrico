@@ -62,6 +62,9 @@ pub(crate) fn entries(app: &CadApp) -> Vec<Entry> {
         let mut children = Vec::new();
         if e.common.xdata.iter().any(|t| t.code == 1001 && t.value == "CC_UNIFILARE_DEVICE") {
             children.push(item("ui.elettrico.unifilar.edit", "Modifica apparecchio..."));
+            if connections::has_port(doc, *h, "in") || connections::has_port(doc, *h, "out") {
+                children.push(item("ui.elettrico.unifilar.circuit.move", "Sposta circuito..."));
+            }
             if connections::has_port(doc, *h, "out") {
                 children.push(item("ui.elettrico.unifilar.link.series", "Collega simboli..."));
                 children.push(item("ui.elettrico.unifilar.link.bus", "Barra di distribuzione..."));

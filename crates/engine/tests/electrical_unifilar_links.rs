@@ -949,3 +949,230 @@ fn refreshing_an_older_overlapping_branch_marks_its_separation_before_explicit_e
     f.s.input(Input::Enter).unwrap();
     assert_eq!(f.path(&added["handle"])[0], [62.5, 215.]);
 }
+
+#[test]
+fn photo_clearance_is_accepted_and_a_closer_wire_is_rejected() {
+    let mut f = fixture();
+    // Native sigla starts at IN.y - 3, height 2.3: top clearance is 0.7 mm.
+    let l = wire(&f, f.port(0, "in"), f.port(2, "in"), json!([[97.5, 275.]]));
+    let added = f.link(l);
+    assert_eq!(f.path(&added["handle"])[0], [27.5, 275.]);
+    f.s.execute("electrical.unifilar.link.delete", &json!({"handle":added["handle"],"backup_dir":f.root})).unwrap();
+    let before = f.s.state().unwrap().doc.clone();
+    let l = wire(&f, f.port(0, "in"), f.port(2, "in"), json!([[27.5, 274.99], [97.5, 274.99]]));
+    assert!(f.s.execute("electrical.unifilar.link.insert", &json!({"model":f.model,"link":l,"backup_dir":f.root})).is_err());
+    assert!(Arc::ptr_eq(&before, &f.s.state().unwrap().doc));
+}
+
+#[test]
+fn moving_a_column_keeps_devices_data_upstream_branches_markers_and_pe_attached() {
+    let mut f = fixture();
+    f.s.doc_mut().unwrap().remove_entity(Handle::parse_hex(&f.devices[3]).unwrap());
+    let mut added = Vec::new();
+    for y in [210., 185.] {
+        let v =
+            f.s.execute("electrical.unifilar.insert", &json!({"model":f.model,"id":"dev","at":[62.5,y],"fields":{},"backup_dir":f.root})).unwrap();
+        added.push(v["handle"].as_str().unwrap().to_owned());
+    }
+    let command = json!({"handle":added[0],"port":"in"});
+    let load = json!({"handle":added[1],"port":"in"});
+    let upstream = f.link(wire(&f, f.port(0, "out"), f.port(1, "in"), json!([[45., 263.], [45., 255.], [62.5, 255.]])));
+    let internal = f.link(wire(&f, f.port(1, "out"), command, json!([])));
+    let downstream = f.link(wire(&f, json!({"handle":added[0],"port":"out"}), load, json!([])));
+    let branch=f.link(json!({"version":3,"kind":"wire","tap":{"wire":internal["handle"],"part":"route","fraction":0.4},"to":f.port(2,"in"),"y":226.8,"waypoints":[[80.,226.8],[80.,253.],[97.5,253.]],"route_mode":"orthogonal"}));
+    let pe = f.link(
+        json!({"version":3,"kind":"wire","from":{"handle":added[1],"port":"out"},"pe_x":62.5,"y":161.,"waypoints":[],"route_mode":"orthogonal"}),
+    );
+    let marker =
+        f.s.execute("electrical.unifilar.insert", &json!({"model":f.model,"id":"mark","at":[62.5,222.],"fields":{},"backup_dir":f.root})).unwrap();
+    let before = f.s.state().unwrap().doc.clone();
+    let result = f.s.execute("electrical.unifilar.circuit.move", &json!({"model":f.model,"handle":added[0],"column":4,"backup_dir":f.root})).unwrap();
+    assert!(std::path::Path::new(result["backup"].as_str().unwrap()).is_file());
+    for h in [f.devices[1].clone(), added[0].clone(), added[1].clone()] {
+        let v = f.s.execute("electrical.unifilar.read", &json!({"handle":h})).unwrap();
+        assert_eq!(v["column"], 4);
+        assert_eq!(v["at"][0], 132.5);
+    }
+    let path = f.path(&upstream["handle"]);
+    assert_eq!(path.first().unwrap(), &[27.5, 263.]);
+    assert_eq!(path.last().unwrap(), &[132.5, 250.]);
+    assert_eq!(f.path(&internal["handle"]), vec![[132.5, 238.], [132.5, 210.]]);
+    assert_eq!(f.path(&downstream["handle"]), vec![[132.5, 198.], [132.5, 185.]]);
+    assert_eq!(f.path(&branch["handle"]).first().unwrap(), &[132.5, 226.8]);
+    assert_eq!(f.path(&branch["handle"]).last().unwrap(), &[97.5, 250.]);
+    assert_eq!(f.path(&pe["handle"]).last().unwrap(), &[132.5, 161.]);
+    let m = f.s.execute("electrical.unifilar.read", &json!({"handle":marker["handle"]})).unwrap();
+    assert_eq!(m["at"], json!([132.5, 222.]));
+    let foreign = f.s.execute("electrical.unifilar.read", &json!({"handle":f.devices[2]})).unwrap();
+    assert_eq!(foreign["at"], json!([97.5, 250.]));
+    let bytes = cadcraft_io::write(f.s.doc().unwrap(), "circuit.dxf").unwrap();
+    let roundtrip = cadcraft_io::read(&bytes, "circuit.dxf").unwrap();
+    assert_eq!(roundtrip.model.len(), f.s.doc().unwrap().model.len());
+    f.s.execute("u", &json!({})).unwrap();
+    assert_eq!(
+        f.s.doc().unwrap().model.iter().map(|e| e.kind.clone()).collect::<Vec<_>>(),
+        before.model.iter().map(|e| e.kind.clone()).collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn circuit_move_rejects_busy_locked_and_invalid_destinations_and_cancel_is_clean() {
+    use cadcraft_engine::{Input, geom::Vec2};
+    let mut f = fixture();
+    let before = f.s.state().unwrap().doc.clone();
+    for col in [0, 1, 2, 3, 4, 999] {
+        assert!(
+            f.s.execute("electrical.unifilar.circuit.move", &json!({"model":f.model,"handle":f.devices[0],"column":col,"backup_dir":f.root}))
+                .is_err()
+        );
+        assert!(Arc::ptr_eq(&before, &f.s.state().unwrap().doc));
+    }
+    f.s.execute("electrical.unifilar.circuit.prepare", &json!({"model":f.model,"handle":f.devices[0],"backup_dir":f.root})).unwrap();
+    f.s.start("electrical.unifilar.circuit.place").unwrap();
+    let _ = f.s.input(Input::Point(Vec2::new(62.5, 250.)));
+    assert!(f.s.unifilar_circuit.as_ref().unwrap().error.is_some());
+    assert!(Arc::ptr_eq(&before, &f.s.state().unwrap().doc));
+    f.s.input(Input::Cancel).unwrap();
+    assert!(f.s.unifilar_circuit.is_none());
+    assert!(Arc::ptr_eq(&before, &f.s.state().unwrap().doc));
+    f.s.doc_mut().unwrap().remove_entity(Handle::parse_hex(&f.devices[3]).unwrap());
+    f.s.doc_mut().unwrap().layer_mut("UNI_APPARECCHI").unwrap().locked = true;
+    let before = f.s.state().unwrap().doc.clone();
+    assert!(f.s.execute("electrical.unifilar.circuit.move", &json!({"model":f.model,"handle":f.devices[0],"column":4,"backup_dir":f.root})).is_err());
+    assert!(Arc::ptr_eq(&before, &f.s.state().unwrap().doc));
+}
+
+#[test]
+fn circuit_interactive_preview_and_backup_failure_do_not_mutate_the_drawing() {
+    use cadcraft_engine::{Input, geom::Vec2};
+    let mut f = fixture();
+    f.s.doc_mut().unwrap().remove_entity(Handle::parse_hex(&f.devices[3]).unwrap());
+    std::fs::write(f.root.join("not-a-folder"), "test").unwrap();
+    let before = f.s.state().unwrap().doc.clone();
+    assert!(
+        f.s.execute(
+            "electrical.unifilar.circuit.move",
+            &json!({"model":f.model,"handle":f.devices[0],"column":4,"backup_dir":f.root.join("not-a-folder")})
+        )
+        .is_err()
+    );
+    assert!(Arc::ptr_eq(&before, &f.s.state().unwrap().doc));
+    f.s.execute("electrical.unifilar.circuit.prepare", &json!({"model":f.model,"handle":f.devices[0],"backup_dir":f.root})).unwrap();
+    f.s.start("electrical.unifilar.circuit.place").unwrap();
+    assert!(f.s.preview(Vec2::new(132.5, 250.)).len() > 3);
+    assert!(Arc::ptr_eq(&before, &f.s.state().unwrap().doc));
+    f.s.input(Input::Point(Vec2::new(132.5, 250.))).unwrap();
+    assert!(f.s.running.is_none());
+    let moved = f.s.execute("electrical.unifilar.read", &json!({"handle":f.devices[0]})).unwrap();
+    assert_eq!(moved["at"], json!([132.5, 275.]));
+    f.s.execute("u", &json!({})).unwrap();
+    assert_eq!(
+        f.s.doc().unwrap().model.iter().map(|e| e.kind.clone()).collect::<Vec<_>>(),
+        before.model.iter().map(|e| e.kind.clone()).collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn moving_a_branch_slides_on_the_fixed_shared_bar_without_moving_other_circuits() {
+    let mut f = fixture();
+    f.s.doc_mut().unwrap().remove_entity(Handle::parse_hex(&f.devices[3]).unwrap());
+    let bus = f.link(json!({"version":1,"kind":"bus","from":f.port(0,"out"),"span":[45,145],"y":262.5}));
+    let branch = f.link(json!({"version":1,"kind":"branch","bus":bus["handle"],"to":f.port(1,"in"),"y":262.5}));
+    let foreign = f.link(json!({"version":1,"kind":"branch","bus":bus["handle"],"to":f.port(2,"in"),"y":262.5}));
+    let bus_path = f.path(&bus["handle"]);
+    let foreign_path = f.path(&foreign["handle"]);
+    f.s.execute("electrical.unifilar.circuit.move", &json!({"model":f.model,"handle":f.devices[1],"column":4,"backup_dir":f.root})).unwrap();
+    assert_eq!(f.path(&bus["handle"]), bus_path);
+    assert_eq!(f.path(&foreign["handle"]), foreign_path);
+    assert_eq!(f.path(&branch["handle"]), vec![[132.5, 262.5], [132.5, 250.]]);
+}
+
+#[test]
+fn stretched_upstream_wire_reroutes_around_text_in_the_destination() {
+    let mut f = fixture();
+    f.s.doc_mut().unwrap().remove_entity(Handle::parse_hex(&f.devices[3]).unwrap());
+    let upstream = f.link(wire(&f, f.port(0, "out"), f.port(1, "in"), json!([[62.5, 263.]])));
+    let text = cadcraft_engine::doc::Text {
+        insert: Vec3::new(110., 262., 0.),
+        align_pt: None,
+        height: 2.3,
+        value: "Obstacle".into(),
+        rotation: 0.,
+        width_factor: 1.,
+        oblique: 0.,
+        style: "Standard".into(),
+        halign: Default::default(),
+        valign: Default::default(),
+    };
+    let h = f.s.doc_mut().unwrap().new_handle();
+    f.s.doc_mut().unwrap().model.push(Entity::new(h, EntityKind::Text(text)));
+    f.s.execute("electrical.unifilar.circuit.move", &json!({"model":f.model,"handle":f.devices[1],"column":4,"backup_dir":f.root})).unwrap();
+    let path = f.path(&upstream["handle"]);
+    assert_eq!(path.first().unwrap(), &[27.5, 263.]);
+    assert_eq!(path.last().unwrap(), &[132.5, 250.]);
+    assert!(path.iter().any(|p| p[1] < 261.));
+}
+
+#[test]
+fn line_data_marker_moves_to_the_new_column_on_a_fixed_shared_bar() {
+    let mut f = fixture();
+    f.s.doc_mut().unwrap().remove_entity(Handle::parse_hex(&f.devices[3]).unwrap());
+    let mut edit = f.s.execute("electrical.unifilar.read", &json!({"handle":f.devices[1]})).unwrap();
+    edit["model"] = json!(f.model);
+    edit["fields"] = json!({});
+    edit["backup_dir"] = json!(f.root);
+    f.s.execute("electrical.unifilar.update", &edit).unwrap();
+    let catalog = f.root.join("catalogo.json");
+    let mut data: Value = serde_json::from_slice(&std::fs::read(&catalog).unwrap()).unwrap();
+    data["symbols"][2]["fields"] = json!(["sigla"]);
+    std::fs::write(catalog, data.to_string()).unwrap();
+    let bus = f.link(json!({"version":1,"kind":"bus","from":f.port(0,"out"),"span":[45,145],"y":262.5}));
+    f.link(json!({"version":1,"kind":"branch","bus":bus["handle"],"to":f.port(1,"in"),"y":262.5}));
+    let mark = f
+        .s
+        .execute("electrical.unifilar.insert", &json!({"model":f.model,"id":"mark","at":[62.5,262.5],"fields":{"sigla":"C1"},"backup_dir":f.root}))
+        .unwrap();
+    f.s.execute("electrical.unifilar.circuit.move", &json!({"model":f.model,"handle":f.devices[1],"column":4,"backup_dir":f.root})).unwrap();
+    let m = f.s.execute("electrical.unifilar.read", &json!({"handle":mark["handle"]})).unwrap();
+    assert_eq!(m["column"], 4);
+    assert_eq!(m["at"], json!([132.5, 262.5]));
+    assert_eq!(m["fields"]["sigla"], "C1");
+}
+
+#[test]
+fn moving_a_circuit_reroutes_the_upstream_feed_away_from_a_foreign_net() {
+    let mut f = fixture();
+    f.s.doc_mut().unwrap().remove_entity(Handle::parse_hex(&f.devices[3]).unwrap());
+    let cmd =
+        f.s.execute("electrical.unifilar.insert", &json!({"model":f.model,"id":"dev","at":[62.5,210.],"fields":{},"backup_dir":f.root})).unwrap();
+    let upstream = f.link(wire(&f, f.port(0, "out"), f.port(1, "in"), json!([[10., 263.], [10., 280.], [62.5, 280.]])));
+    let internal = f.link(wire(&f, f.port(1, "out"), json!({"handle":cmd["handle"],"port":"in"}), json!([])));
+    f.link(json!({"version":3,"kind":"wire","tap":{"wire":internal["handle"],"part":"route","fraction":0.4},"to":f.port(2,"in"),"y":226.8,"waypoints":[[80.,226.8],[80.,280.],[97.5,280.]],"route_mode":"orthogonal"}));
+    f.s.execute("electrical.unifilar.circuit.move", &json!({"model":f.model,"handle":f.devices[1],"column":4,"backup_dir":f.root})).unwrap();
+    let path = f.path(&upstream["handle"]);
+    assert_eq!(path.first().unwrap(), &[27.5, 263.]);
+    assert_eq!(path.last().unwrap(), &[132.5, 250.]);
+    assert!(!path.windows(2).any(|s| s[0][1] == 280. && s[1][1] == 280. && s[0][0].min(s[1][0]) < 97.5 && s[0][0].max(s[1][0]) > 80.));
+}
+
+#[test]
+fn a_moved_circuit_retains_orthogonal_wires_when_one_device_is_edited_later() {
+    let mut f = fixture();
+    for i in [1, 3] {
+        f.s.doc_mut().unwrap().remove_entity(Handle::parse_hex(&f.devices[i]).unwrap());
+    }
+    let mut l = wire(&f, f.port(2, "out"), f.port(0, "in"), json!([[115., 238.], [115., 280.], [27.5, 280.]]));
+    l["route_mode"] = json!("orthogonal");
+    let wire = f.link(l);
+    f.s.execute("electrical.unifilar.circuit.move", &json!({"model":f.model,"handle":f.devices[0],"column":4,"backup_dir":f.root})).unwrap();
+    let mut edit = f.s.execute("electrical.unifilar.read", &json!({"handle":f.devices[0]})).unwrap();
+    edit["model"] = json!(f.model);
+    edit["backup_dir"] = json!(f.root);
+    edit["at"] = json!([62.5, 275.]);
+    f.s.execute("electrical.unifilar.update", &edit).unwrap();
+    let path = f.path(&wire["handle"]);
+    assert!(
+        path.windows(2).all(|s| (s[0][0] - s[1][0]).abs() < 1e-7 || (s[0][1] - s[1][1]).abs() < 1e-7),
+        "Moving a circuit must not turn orthogonal wires into free-angle wires: {path:?}"
+    );
+}

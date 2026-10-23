@@ -1237,3 +1237,7 @@ menu	Modify	Edita
 	Search for pattern	Cerca modello
 	Run Script...	Esegui script...
 	Select closed objects (regions, closed polylines, circles).	Selezionare oggetti chiusi (regioni, polilinee chiuse, cerchi).
+	Move electrical circuit	Sposta circuito
+	Place electrical circuit	Posiziona circuito
+	Prepare circuit move	Prepara spostamento circuito
+	Sposta circuito...	Sposta circuito...

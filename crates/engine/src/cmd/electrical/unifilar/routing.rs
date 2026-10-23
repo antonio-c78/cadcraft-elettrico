@@ -2,6 +2,8 @@
 use super::super::*;
 use std::cmp::Reverse;
 use std::collections::BinaryHeap;
+/// Nominal 2.3 mm device label at port Y - 3 leaves exactly this clearance.
+pub(super) const CLEARANCE: f64 = 0.7;
 pub(super) type Rect = [f64; 4];
 pub(super) fn blocked(a: Vec2, b: Vec2, boxes: &[Rect]) -> bool {
     boxes.iter().any(|r| {

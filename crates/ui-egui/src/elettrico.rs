@@ -15,6 +15,7 @@ mod rooms;
 mod symbol;
 mod unifilar;
 mod unifilar_browser;
+mod unifilar_circuits;
 mod unifilar_connections;
 
 fn catalog_environment() -> Option<String> {
@@ -121,6 +122,9 @@ impl State {
 pub fn route(app: &mut CadApp, id: &str, params: &Value) -> Option<Result<Value, String>> {
     if let Some(result) = library_editor::route(app, id, params) {
         return Some(result);
+    }
+    if id == "ui.elettrico.unifilar.circuit.move" {
+        return Some(unifilar_circuits::command(app, params));
     }
     if id.starts_with("ui.elettrico.unifilar.link.") {
         return Some(unifilar_connections::command(app, id, params));
@@ -249,6 +253,7 @@ pub fn show(app: &mut CadApp, ctx: &egui::Context) {
     unifilar::show(app, ctx);
     unifilar_browser::show(app, ctx);
     unifilar_connections::show(app, ctx);
+    unifilar_circuits::show(app, ctx);
     calibration::show(app, ctx);
     context::show(app, ctx);
     rooms::show(app, ctx);

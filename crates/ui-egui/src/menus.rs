@@ -18,6 +18,7 @@ pub const UI_COMMANDS: &[(&str, &str, &[&str], Option<&str>)] = &[
     ("ui.elettrico.calibrate", "Scala da misura nota...", &["Elettrico", "Scala da misura nota..."], None),
     ("ui.elettrico.unifilar.new", "Nuovo schema unifilare...", &["Elettrico", "Schemi unifilari", "Nuovo schema unifilare..."], None),
     ("ui.elettrico.unifilar.symbols", "Inserisci apparecchio...", &["Elettrico", "Schemi unifilari", "Inserisci apparecchio..."], None),
+    ("ui.elettrico.unifilar.circuit.move", "Sposta circuito...", &["Elettrico", "Schemi unifilari", "Sposta circuito..."], None),
     ("ui.elettrico.unifilar.edit", "Modifica apparecchio...", &["Elettrico", "Schemi unifilari", "Modifica apparecchio..."], None),
     ("ui.elettrico.unifilar.link.series", "Collega simboli...", &["Elettrico", "Schemi unifilari", "Collega simboli..."], None),
     ("ui.elettrico.unifilar.link.bus", "Barra di distribuzione...", &["Elettrico", "Schemi unifilari", "Barra di distribuzione..."], None),

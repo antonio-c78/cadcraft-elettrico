@@ -22,7 +22,7 @@ pub(super) fn valid_tap(t: &Tap) -> bool {
     handle(&t.wire).is_ok() && ["route", "bar"].contains(&t.part.as_str()) && t.fraction.is_finite() && (0.0..=1.0).contains(&t.fraction)
 }
 /// Exact endpoint-preserving orthogonal/octilinear leg. Flip changes the first bend.
-fn leg(a: Vec2, b: Vec2, mode: RouteMode, flip: bool) -> Vec<Vec2> {
+pub(super) fn leg(a: Vec2, b: Vec2, mode: RouteMode, flip: bool) -> Vec<Vec2> {
     let d = b - a;
     if a.near(b, 1e-7) {
         return vec![a];
@@ -72,7 +72,7 @@ impl Env {
         }
         None
     }
-    fn start(&self, l: &Link) -> Result<Vec2> {
+    pub(super) fn start(&self, l: &Link) -> Result<Vec2> {
         if let Some(p) = &l.from {
             self.port(p, "any")
         } else if let Some(t) = &l.tap {
@@ -83,7 +83,7 @@ impl Env {
             Err(err("Scegli la partenza."))
         }
     }
-    fn end(&self, l: &Link) -> Result<Vec2> {
+    pub(super) fn end(&self, l: &Link) -> Result<Vec2> {
         if let Some(p) = &l.to {
             self.port(p, "any")
         } else if let Some(t) = &l.end_tap {

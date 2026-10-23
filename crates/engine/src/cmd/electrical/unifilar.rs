@@ -2,6 +2,7 @@
 use super::*;
 use std::collections::{BTreeMap, BTreeSet};
 mod annotations;
+pub mod circuits;
 pub mod command_fields;
 pub mod connections;
 mod markers;
@@ -88,6 +89,7 @@ pub(super) fn specs() -> Vec<CommandSpec> {
     ];
     commands.extend(placement::specs());
     commands.extend(connections::specs());
+    commands.extend(circuits::specs());
     commands
 }
 #[cfg(not(target_arch = "wasm32"))]

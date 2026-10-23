@@ -8,6 +8,8 @@ use std::sync::Mutex;
 const CMD: &str = "electrical.unifilar.link";
 const APP: &str = "CC_UNIFILARE_LINK";
 mod contacts;
+mod relocate;
+pub(super) use relocate::relocate;
 mod dots;
 mod splice;
 pub(super) use splice::splice;
@@ -276,7 +278,12 @@ impl Env {
                                 env.boxes.push(Obstacle {
                                     owner: e.handle,
                                     body: false,
-                                    rect: [p.x - 0.8, p.y - 0.8, p.x + w + 0.8, p.y + t.height + 0.8],
+                                    rect: [
+                                        p.x - routing::CLEARANCE,
+                                        p.y - routing::CLEARANCE,
+                                        p.x + w + routing::CLEARANCE,
+                                        p.y + t.height + routing::CLEARANCE,
+                                    ],
                                 });
                             }
                         }
@@ -286,7 +293,12 @@ impl Env {
                             env.boxes.push(Obstacle {
                                 owner: e.handle,
                                 body: false,
-                                rect: [a.x.min(b.x) - 0.8, a.y.min(b.y) - 0.8, a.x.max(b.x) + 0.8, a.y.max(b.y) + 0.8],
+                                rect: [
+                                    a.x.min(b.x) - routing::CLEARANCE,
+                                    a.y.min(b.y) - routing::CLEARANCE,
+                                    a.x.max(b.x) + routing::CLEARANCE,
+                                    a.y.max(b.y) + routing::CLEARANCE,
+                                ],
                             });
                         }
                         EntityKind::Line(l) if part.common.layer != "UNI_TESTI" => {
@@ -299,7 +311,12 @@ impl Env {
                     env.boxes.push(Obstacle {
                         owner: e.handle,
                         body: true,
-                        rect: [bounds.min.x - 0.6, bounds.min.y - 0.6, bounds.max.x + 0.6, bounds.max.y + 0.6],
+                        rect: [
+                            bounds.min.x - routing::CLEARANCE,
+                            bounds.min.y - routing::CLEARANCE,
+                            bounds.max.x + routing::CLEARANCE,
+                            bounds.max.y + routing::CLEARANCE,
+                        ],
                     });
                 }
                 let visible = e.common.visible && d.layer(&e.common.layer).is_none_or(|l| l.on && !l.frozen);
@@ -309,7 +326,11 @@ impl Env {
             {
                 let p = t.insert.xy();
                 let w = cadcraft_fonts::line_width(&t.value, t.height, t.width_factor);
-                env.boxes.push(Obstacle { owner: e.handle, body: false, rect: [p.x - 0.8, p.y - 0.8, p.x + w + 0.8, p.y + t.height + 0.8] });
+                env.boxes.push(Obstacle {
+                    owner: e.handle,
+                    body: false,
+                    rect: [p.x - routing::CLEARANCE, p.y - routing::CLEARANCE, p.x + w + routing::CLEARANCE, p.y + t.height + routing::CLEARANCE],
+                });
             }
         }
         if env.nodes.len() > 128 || env.links.len() > 256 || env.boxes.len() > 2048 {
