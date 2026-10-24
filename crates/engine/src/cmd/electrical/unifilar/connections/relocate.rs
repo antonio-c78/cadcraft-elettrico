@@ -126,7 +126,7 @@ fn foreign_overlap(env: &Env, l: &Link, path: &[Vec2]) -> Result<bool> {
 
 /// Retire old routes of the moving group before collision checks. Otherwise a wire
 /// still awaiting relocation falsely blocks the column another circuit is vacating.
-fn affected_routes(env: &Env, moved: &BTreeSet<Handle>) -> Result<BTreeSet<Handle>> {
+fn affected_routes(env: &Env, moved: &BTreeSet<Handle>, nodes: &BTreeSet<String>) -> Result<BTreeSet<Handle>> {
     let mut affected = BTreeSet::new();
     for h in network::order(&env.links)? {
         let l = env.links.get(&h).ok_or_else(|| err("Collegamento assente."))?;
@@ -136,7 +136,7 @@ fn affected_routes(env: &Env, moved: &BTreeSet<Handle>) -> Result<BTreeSet<Handl
             .into_iter()
             .flatten()
             .any(|t| t.part == "route" && Handle::parse_hex(&t.wire).is_some_and(|h| affected.contains(&h)));
-        if terminal_moves || anchor_moves {
+        if terminal_moves || anchor_moves || [l.start_node.as_ref(), l.end_node.as_ref()].into_iter().flatten().any(|n| nodes.contains(&n.id)) {
             affected.insert(h);
         }
     }
@@ -152,8 +152,30 @@ pub(crate) fn relocate(
     dx: f64,
 ) -> Result<BTreeSet<Handle>> {
     let old = Env::new(before, layout)?;
+    let columns: BTreeSet<_> = moved
+        .iter()
+        .filter_map(|h| before.entity(*h))
+        .filter_map(|e| placement::data(e, "CC_UNIFILARE_DEVICE").ok().flatten())
+        .filter_map(|m| m["column"].as_u64())
+        .collect();
+    let mut shifted = BTreeSet::new();
+    for (h, original) in &old.links {
+        let mut l = original.clone();
+        for n in [&mut l.start_node, &mut l.end_node].into_iter().flatten() {
+            if layout.columns.iter().any(|c| columns.contains(&(c.index as u64)) && n.at[0] >= c.bounds[0] && n.at[0] <= c.bounds[2]) {
+                n.at[0] += dx;
+                shifted.insert(n.id.clone());
+            }
+        }
+        if l.start_node.is_some() || l.end_node.is_some() {
+            let e = drawing.entity(*h).ok_or_else(|| err("Filo assente."))?;
+            let mut m = placement::data(e, APP)?.ok_or_else(|| err("Dati del filo assenti."))?;
+            m["link"] = serde_json::to_value(l).map_err(|e| err(e.to_string()))?;
+            drawing.modify_entity(*h, |e| placement::tags(&mut e.common, APP, &m))?;
+        }
+    }
     let mut env = Env::new(drawing, layout)?;
-    let affected = affected_routes(&old, moved)?;
+    let affected = affected_routes(&old, moved, &shifted)?;
     env.wires.retain(|(h, _, _)| !affected.contains(h));
     let mut changed = BTreeSet::new();
     let mut positions: BTreeMap<Handle, Vec<(Vec2, Vec2)>> = BTreeMap::new();
@@ -196,6 +218,10 @@ pub(crate) fn relocate(
     for h in network::order(&old.links)? {
         let original = old.links.get(&h).ok_or_else(|| err("Collegamento assente."))?;
         let mut l = original.clone();
+        if let Some(updated) = env.links.get(&h) {
+            l.start_node = updated.start_node.clone();
+            l.end_node = updated.end_node.clone();
+        }
         let path = old.paths.get(&h).ok_or_else(|| err("Percorso assente."))?;
         if l.kind == "bus" {
             // The common distribution span never follows one circuit's column.

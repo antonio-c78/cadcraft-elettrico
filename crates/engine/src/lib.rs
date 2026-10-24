@@ -679,6 +679,7 @@ pub struct Session {
     pub unifilar_draft: Option<cmd::electrical::unifilar::placement::Draft>,
     pub unifilar_link: Option<cmd::electrical::unifilar::connections::Draft>,
     pub unifilar_circuit: Option<cmd::electrical::unifilar::circuits::Draft>,
+    pub unifilar_section: Option<cmd::electrical::unifilar::connections::sections::Draft>,
     pub electrical_measure: Option<cmd::electrical::calibration::Pick>,
     pub electrical_editor: Option<cmd::electrical::library_editor::Draft>,
 }
@@ -735,6 +736,7 @@ impl Session {
             unifilar_draft: None,
             unifilar_link: None,
             unifilar_circuit: None,
+            unifilar_section: None,
             electrical_editor: None,
         }
     }
@@ -1283,6 +1285,9 @@ impl Session {
     fn finish(&mut self, run: Running, cancelled: bool) {
         if cancelled && run.id == "electrical.unifilar.circuit.place" {
             cmd::electrical::unifilar::circuits::cancel(self);
+        }
+        if cancelled && run.id == "electrical.unifilar.section.place" {
+            cmd::electrical::unifilar::connections::sections::cancel(self);
         }
         // A typed selection mode or SIngle never outlives its command.
         self.select_mode = None;

@@ -397,3 +397,25 @@ New actions reuse the existing dispatcher and default to Edit until categorized.
 No drawing edits happen during menu construction. Unifilar selections promote the
 native circuit move and connection commands instead of generic transforms that bypass
 table data and route dependencies. Room deletion uses its native confirmation flow.
+
+
+## Unifilar logical-section deletion
+
+For a native wire, **Elimina tratto...** starts a point picker with a highlighted
+preview and confirmation. A section runs between electrical connections (device
+terminals, real branches, PE/bus attachments or free ends); bends and ordinary
+crossings do not split it. Bars retain their separate whole-bar deletion flow.
+Escape restores the original selection without changing the drawing.
+
+`connections/sections/graph.rs` builds a bounded physical graph from explicit
+attachments and coincident conductor runs. `sections.rs` plans the replacement
+chains on a clone, remaps surviving line markers by position, validates routing,
+and commits with a pre-change backup and one Undo. Junction graphics are always
+recomputed, including redundant coincident terminal runs. New persistent version-3
+`start_node`/`end_node` anchors keep split routes independent of deleted wire
+handles; they survive DXF round trips and follow circuit column moves. Opening a
+drawing does not rewrite existing routes.
+
+Commands: `electrical.unifilar.section.delete {model,handle?,at:[x,y],backup_dir?}`
+for automation; `.section.prepare` and interactive `.section.place` for the UI.
+The explicit low-level `.link.delete` API retains whole-link semantics.

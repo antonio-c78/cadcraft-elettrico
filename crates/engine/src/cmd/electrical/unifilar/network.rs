@@ -43,6 +43,7 @@ pub(super) fn net(l: &Link, links: &BTreeMap<Handle, Link>) -> Result<(String, S
     type Key = (String, String);
     fn tokens(w: &Link) -> Result<Vec<Key>> {
         let mut t: Vec<_> = [w.from.as_ref(), w.to.as_ref()].into_iter().flatten().map(|p| (p.handle.clone(), p.port.clone())).collect();
+        t.extend([w.start_node.as_ref(), w.end_node.as_ref()].into_iter().flatten().map(|n| ("@node".into(), n.id.clone())));
         for h in parents(w)? {
             t.push(("@wire".into(), h.hex()));
         }
@@ -94,13 +95,27 @@ pub(super) fn order(links: &BTreeMap<Handle, Link>) -> Result<Vec<Handle>> {
 }
 pub(super) fn validate_graph(links: &BTreeMap<Handle, Link>) -> Result<()> {
     let _ = order(links)?;
+    let mut anchors: BTreeMap<&str, [f64; 2]> = BTreeMap::new();
+    for l in links.values() {
+        for n in [l.start_node.as_ref(), l.end_node.as_ref()].into_iter().flatten() {
+            if let Some(old) = anchors.insert(&n.id, n.at)
+                && (old[0] - n.at[0]).abs() + (old[1] - n.at[1]).abs() > 1e-6
+            {
+                return Err(err("Posizioni discordanti della giunzione."));
+            }
+        }
+    }
     let mut inputs = BTreeSet::new();
     let mut pe = BTreeSet::new();
     let mut edges: BTreeMap<Handle, Vec<Handle>> = BTreeMap::new();
     for l in links.values() {
         if l.kind == "wire" {
-            let start = usize::from(l.from.is_some()) + usize::from(l.tap.is_some()) + usize::from(l.pe_start.is_some());
-            let end = usize::from(l.to.is_some()) + usize::from(l.end_tap.is_some()) + usize::from(l.pe_x.is_some());
+            let start = usize::from(l.from.is_some())
+                + usize::from(l.tap.is_some())
+                + usize::from(l.pe_start.is_some())
+                + usize::from(l.start_node.is_some());
+            let end =
+                usize::from(l.to.is_some()) + usize::from(l.end_tap.is_some()) + usize::from(l.pe_x.is_some()) + usize::from(l.end_node.is_some());
             if start != 1 || end != 1 || l.bus.is_some() || l.span.is_some() {
                 return Err(err("Terminali del filo non validi."));
             }

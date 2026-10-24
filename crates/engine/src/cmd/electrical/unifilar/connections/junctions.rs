@@ -139,6 +139,9 @@ pub(super) fn graph_read(s: &mut Session, p: &Value) -> Result<Value> {
     let mut junctions = BTreeMap::new();
     let mut wires = Vec::new();
     for (h, l) in &env.links {
+        for n in [l.start_node.as_ref(), l.end_node.as_ref()].into_iter().flatten() {
+            junctions.insert(n.id.clone(), json!({"id":n.id,"at":n.at}));
+        }
         if let Some(p) = &l.from {
             env.port(p, if l.kind == "pe" { "pe" } else { "out" })?;
         }
@@ -159,7 +162,7 @@ pub(super) fn graph_read(s: &mut Session, p: &Value) -> Result<Value> {
             None
         };
         wires.push(json!({"handle":h.hex(),"source":l.from,"junction":junction,"bus":l.bus,"destination":l.to,
-            "end_junction":l.end_tap,"pe_start":l.pe_start,"pe_x":l.pe_x,"net":net(l,&env.links)?,"waypoints":l.waypoints,"automatic":l.automatic}));
+            "end_junction":l.end_tap,"start_node":l.start_node,"end_node":l.end_node,"pe_start":l.pe_start,"pe_x":l.pe_x,"net":net(l,&env.links)?,"waypoints":l.waypoints,"automatic":l.automatic}));
     }
     let ports: Vec<_> = env
         .nodes

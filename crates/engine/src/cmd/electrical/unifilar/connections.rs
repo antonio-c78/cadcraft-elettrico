@@ -14,6 +14,7 @@ mod dots;
 mod splice;
 pub(super) use splice::splice;
 mod junctions;
+pub mod sections;
 mod tracing;
 use junctions::{graph_read, ready_target};
 type PreviewCache = Arc<Mutex<Option<(String, std::result::Result<Vec<EntityKind>, String>)>>>;
@@ -31,6 +32,10 @@ pub struct Tap {
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Link {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub start_node: Option<Anchor>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub end_node: Option<Anchor>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub end_tap: Option<Tap>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -56,6 +61,12 @@ pub struct Link {
     pub waypoints: Vec<[f64; 2]>,
     #[serde(default)]
     pub automatic: bool,
+}
+/// A persistent explicit junction, independent of the wire that was drawn first.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct Anchor {
+    pub id: String,
+    pub at: [f64; 2],
 }
 #[derive(Clone)]
 pub struct Draft {
@@ -187,6 +198,14 @@ fn valid_link(l: &Link) -> bool {
         && l.end_tap.as_ref().is_none_or(tracing::valid_tap)
         && l.pe_start.is_none_or(|x| x.is_finite() && x.abs() <= 1000.)
         && l.pe_x.is_none_or(|x| x.is_finite() && x.abs() <= 1000.)
+        && [l.start_node.as_ref(), l.end_node.as_ref()].into_iter().flatten().all(|n| {
+            l.version == 3
+                && l.kind == "wire"
+                && !n.id.is_empty()
+                && n.id.len() <= 80
+                && n.id.is_ascii()
+                && n.at.iter().all(|v| v.is_finite() && v.abs() <= 1000.)
+        })
         && l.segment_modes.len() <= 33
         && l.waypoints.len() <= 32
         && l.waypoints.iter().flatten().all(|v| v.is_finite() && v.abs() <= 1000.)
@@ -715,6 +734,8 @@ fn prepare(s: &mut Session, p: &Value) -> Result<Value> {
         read_link(s.doc()?, h)?
     } else {
         Link {
+            start_node: None,
+            end_node: None,
             end_tap: None,
             pe_x: None,
             pe_start: None,
@@ -1099,7 +1120,7 @@ fn vertical_default(d: &Draft) -> Result<Option<f64>> {
     Ok(((a.x - b.x).abs() > 1e-7).then_some((a.x + b.x) * 0.5))
 }
 pub(super) fn specs() -> Vec<CommandSpec> {
-    vec![
+    let mut commands = vec![
         CommandSpec::new("electrical.unifilar.network.read", "Read unifilar network", graph_read).noundo(),
         CommandSpec::new("electrical.unifilar.link.prepare", "Prepare unifilar connection", prepare).noundo(),
         CommandSpec::new("electrical.unifilar.link.insert", "Insert unifilar connection", insert),
@@ -1111,7 +1132,9 @@ pub(super) fn specs() -> Vec<CommandSpec> {
                 current(s)?;
                 Ok(Box::new(Place))
             }),
-    ]
+    ];
+    commands.extend(sections::specs());
+    commands
 }
 struct Place;
 impl Interactive for Place {

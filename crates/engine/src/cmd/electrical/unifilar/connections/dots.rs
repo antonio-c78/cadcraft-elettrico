@@ -28,12 +28,12 @@ pub(super) fn rebuild(d: &mut Drawing) -> Result<()> {
             return Err(err("Troppi vertici."));
         }
         if let Some(p) = path.first()
-            && (l.from.is_some() || l.tap.is_some() || l.kind == "branch")
+            && (l.from.is_some() || l.tap.is_some() || l.start_node.is_some() || l.kind == "branch")
         {
             candidates.push((e.handle, Vec2::new(p[0], p[1]), false, false));
         }
         if let Some(p) = path.last()
-            && (l.to.is_some() || l.end_tap.is_some() || l.kind == "bus" || l.kind == "pe" || l.pe_x.is_some())
+            && (l.to.is_some() || l.end_tap.is_some() || l.end_node.is_some() || l.kind == "bus" || l.kind == "pe" || l.pe_x.is_some())
         {
             candidates.push((e.handle, Vec2::new(p[0], p[1]), l.kind == "pe" || l.pe_x.is_some(), true));
         }
@@ -105,12 +105,21 @@ pub(super) fn rebuild(d: &mut Drawing) -> Result<()> {
         }
         // The device supplies one electrical leg: two attached wires already branch.
         // Only route endpoints count here; an unrelated crossing is not an attachment.
-        let terminal_branch = ports.iter().any(|p| p.near(at, 1e-6))
-            && paths
-                .iter()
-                .filter(|(h, path)| nets.get(h) == nets.get(&owner) && [path.first(), path.last()].into_iter().flatten().any(|p| p.near(at, 1e-6)))
-                .count()
-                >= 2;
+        let mut attached: Vec<Vec<Vec2>> = Vec::new();
+        if ports.iter().any(|p| p.near(at, 1e-6)) {
+            for (h, path) in &paths {
+                if nets.get(h) != nets.get(&owner) || ![path.first(), path.last()].into_iter().flatten().any(|p| p.near(at, 1e-6)) {
+                    continue;
+                }
+                let oriented: Vec<_> =
+                    if path.first().is_some_and(|p| p.near(at, 1e-6)) { path.clone() } else { path.iter().rev().copied().collect() };
+                let oriented = routing::simplify(oriented);
+                if !attached.iter().any(|old| old.len() == oriented.len() && old.iter().zip(&oriented).all(|(a, b)| a.near(*b, 1e-6))) {
+                    attached.push(oriented);
+                }
+            }
+        }
+        let terminal_branch = attached.len() >= 2;
         if pe || terminal_branch || rays.len() >= 3 {
             marks.entry(owner).or_default().push(at);
             emitted.push(at);

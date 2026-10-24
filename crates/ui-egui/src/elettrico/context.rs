@@ -81,7 +81,8 @@ pub(crate) fn entries(app: &CadApp) -> Vec<Entry> {
             if connections::can_branch(doc, *h) {
                 children.push(item("ui.elettrico.unifilar.link.branch", "Derivazione da filo o barra..."));
             }
-            children.push(item("ui.elettrico.unifilar.link.delete", "Elimina collegamento..."));
+            children
+                .push(item("ui.elettrico.unifilar.link.delete", if connections::is_bus(doc, *h) { "Elimina barra..." } else { "Elimina tratto..." }));
         }
         if !children.is_empty() {
             return vec![Entry::Sub { label: "Elettrico".into(), children }];

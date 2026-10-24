@@ -79,6 +79,8 @@ impl Env {
             self.tap_point(t).map(|v| v.0)
         } else if let Some(x) = l.pe_start {
             self.pe().map(|(y, _)| Vec2::new(x, y))
+        } else if let Some(n) = &l.start_node {
+            Ok(Vec2::new(n.at[0], n.at[1]))
         } else {
             Err(err("Scegli la partenza."))
         }
@@ -90,6 +92,8 @@ impl Env {
             self.tap_point(t).map(|v| v.0)
         } else if let Some(x) = l.pe_x {
             self.pe().map(|(y, _)| Vec2::new(x, y))
+        } else if let Some(n) = &l.end_node {
+            Ok(Vec2::new(n.at[0], n.at[1]))
         } else {
             Err(err("Scegli l’arrivo."))
         }
@@ -207,6 +211,7 @@ impl Draft {
             self.link.from = None;
             self.link.tap = None;
             self.link.pe_start = None;
+            self.link.start_node = None;
             match end {
                 End::Port(p) => self.link.from = Some(p),
                 End::Tap(t) => self.link.tap = Some(t),
@@ -236,6 +241,7 @@ impl Draft {
             link.to = None;
             link.end_tap = None;
             link.pe_x = None;
+            link.end_node = None;
             match end {
                 End::Port(p) => link.to = Some(p),
                 End::Tap(t) => link.end_tap = Some(t),
@@ -278,6 +284,7 @@ impl Draft {
                 self.link.to = None;
                 self.link.end_tap = None;
                 self.link.pe_x = None;
+                self.link.end_node = None;
                 self.phase = if key == "origine" { 0 } else { 9 };
             }
             _ => return Ok(false),

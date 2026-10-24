@@ -1264,3 +1264,124 @@ fn four_circuits_can_shift_one_column_and_back_as_one_operation() {
         }
     }
 }
+
+fn deletion_case() -> (Fixture, Value, Value, Value) {
+    let mut f = fixture();
+    for i in [1, 2, 3] {
+        f.s.doc_mut().unwrap().remove_entity(Handle::parse_hex(&f.devices[i]).unwrap());
+    }
+    for (i, at) in [(1, json!([27.5, 235.])), (2, json!([97.5, 190.]))] {
+        let r = f.s.execute("electrical.unifilar.insert", &json!({"model":f.model,"id":"dev","at":at,"fields":{},"backup_dir":f.root})).unwrap();
+        f.devices[i] = r["handle"].as_str().unwrap().into();
+    }
+    let mut top = wire(&f, f.port(0, "out"), f.port(2, "in"), json!([[97.5, 263.]]));
+    top["route_mode"] = json!("orthogonal");
+    let top = f.link(top);
+    f.link(wire(&f, f.port(0, "out"), f.port(1, "in"), json!([])));
+    let bridge=f.link(json!({"version":3,"kind":"wire","from":f.port(1,"in"),"end_tap":{"wire":top["handle"],"part":"route","fraction":98./143.},"y":235.,"waypoints":[],"route_mode":"orthogonal"}));
+    let lower=f.link(json!({"version":3,"kind":"wire","from":f.port(1,"out"),"end_tap":{"wire":top["handle"],"part":"route","fraction":123./143.},"y":210.,"waypoints":[[27.5,200.],[80.,200.],[80.,210.]],"route_mode":"orthogonal"}));
+    (f, top, bridge, lower)
+}
+#[test]
+fn deleting_bridge_removes_terminal_dot_even_with_duplicate_coincident_terminal_runs() {
+    let (mut f, _, bridge, _) = deletion_case();
+    f.link(wire(&f, f.port(0, "out"), f.port(1, "in"), json!([])));
+    assert_eq!(dot_count(&f), 4);
+    f.s.execute("electrical.unifilar.link.delete", &json!({"handle":bridge["handle"],"backup_dir":f.root})).unwrap();
+    assert_eq!(dot_count(&f), 2, "Only the source branch and lower junction remain");
+    f.s.undo().unwrap();
+    assert_eq!(dot_count(&f), 4);
+}
+#[test]
+fn section_deletion_stops_at_junction_preserving_lower_continuation_and_other_branches() {
+    let (mut f, top, _, _) = deletion_case();
+    let before = f.s.doc().unwrap().clone();
+    f.s.execute("electrical.unifilar.section.delete", &json!({"model":f.model,"handle":top["handle"],"at":[65.,263.],"backup_dir":f.root})).unwrap();
+    assert_eq!(dot_count(&f), 2, "The old upper-right node is now a bend, not a junction");
+    let graph = f.s.execute("electrical.unifilar.network.read", &json!({"model":f.model})).unwrap();
+    let paths: Vec<_> = graph["wires"].as_array().unwrap().iter().map(|w| f.path(&w["handle"])).collect();
+    assert!(
+        paths
+            .iter()
+            .any(|p| p.windows(2).any(|s| s[0][0] == 97.5 && s[1][0] == 97.5 && s[0][1].max(s[1][1]) >= 235. && s[0][1].min(s[1][1]) <= 210.))
+    );
+    assert!(!paths.iter().any(|p| p.windows(2).any(|s| s[0][1] == 263. && s[1][1] == 263. && s[0][0].max(s[1][0]) > 27.5)));
+    let bytes = cadcraft_io::write(f.s.doc().unwrap(), "section.dxf").unwrap();
+    let reopened = cadcraft_io::read(&bytes, "section.dxf").unwrap();
+    let mut other = Session::empty();
+    other.open_drawing(reopened, "reopened", None);
+    other.execute("electrical.unifilar.network.read", &json!({"model":f.model})).unwrap();
+    f.s.undo().unwrap();
+    assert_eq!(f.s.doc().unwrap().model, before.model);
+}
+#[test]
+fn section_preview_cancel_and_failed_backup_leave_the_entire_drawing_unchanged() {
+    use cadcraft_engine::{Input, geom::Vec2};
+    let (mut f, top, _, _) = deletion_case();
+    let before = f.s.state().unwrap().doc.clone();
+    f.s.execute("electrical.unifilar.section.prepare", &json!({"model":f.model,"handle":top["handle"]})).unwrap();
+    f.s.start("electrical.unifilar.section.place").unwrap();
+    assert!(!f.s.preview(Vec2::new(65., 263.)).is_empty());
+    f.s.input(Input::Point(Vec2::new(65., 263.))).unwrap();
+    assert!(Arc::ptr_eq(&before, &f.s.state().unwrap().doc));
+    f.s.input(Input::Cancel).unwrap();
+    assert!(f.s.unifilar_section.is_none());
+    let file = f.root.join("not-a-directory");
+    std::fs::write(&file, b"keep").unwrap();
+    assert!(
+        f.s.execute("electrical.unifilar.section.delete", &json!({"model":f.model,"handle":top["handle"],"at":[65.,263.],"backup_dir":file}))
+            .is_err()
+    );
+    assert!(Arc::ptr_eq(&before, &f.s.state().unwrap().doc));
+}
+
+#[test]
+fn section_deletion_remaps_retained_markers_and_removes_only_markers_on_the_cut() {
+    let (mut f, top, _, _) = deletion_case();
+    let kept =
+        f.s.execute("electrical.unifilar.insert", &json!({"model":f.model,"id":"mark","at":[97.5,225.],"fields":{},"backup_dir":f.root})).unwrap();
+    let cut =
+        f.s.execute("electrical.unifilar.insert", &json!({"model":f.model,"id":"mark","at":[65.,263.],"fields":{},"backup_dir":f.root})).unwrap();
+    f.s.execute("electrical.unifilar.section.delete", &json!({"model":f.model,"handle":top["handle"],"at":[65.,263.],"backup_dir":f.root})).unwrap();
+    let kept = f.s.execute("electrical.unifilar.read", &json!({"handle":kept["handle"]})).unwrap();
+    assert_eq!(kept["at"], json!([97.5, 225.]));
+    assert!(f.s.doc().unwrap().entity(Handle::parse_hex(cut["handle"].as_str().unwrap()).unwrap()).is_none());
+    f.s.execute("electrical.unifilar.network.read", &json!({"model":f.model})).unwrap();
+}
+#[test]
+fn section_deletion_does_not_stop_at_a_geometric_crossing() {
+    let mut f = fixture();
+    let first = f.link(json!({"version":1,"kind":"series","from":f.port(0,"out"),"to":f.port(2,"in"),"y":260}));
+    let second = f.link(json!({"version":1,"kind":"series","from":f.port(1,"out"),"to":f.port(0,"in"),"y":255}));
+    let before = f.path(&second["handle"]);
+    let path = f.path(&first["handle"]);
+    let pair = path
+        .windows(2)
+        .max_by(|a, b| ((a[0][0] - a[1][0]).abs() + (a[0][1] - a[1][1]).abs()).total_cmp(&((b[0][0] - b[1][0]).abs() + (b[0][1] - b[1][1]).abs())))
+        .unwrap();
+    let at = [(pair[0][0] + pair[1][0]) / 2., (pair[0][1] + pair[1][1]) / 2.];
+    f.s.execute("electrical.unifilar.section.delete", &json!({"model":f.model,"handle":first["handle"],"at":at,"backup_dir":f.root})).unwrap();
+    assert!(f.s.doc().unwrap().entity(Handle::parse_hex(first["handle"].as_str().unwrap()).unwrap()).is_none());
+    assert_eq!(before, f.path(&second["handle"]));
+    assert_eq!(dot_count(&f), 0);
+}
+#[test]
+fn a_circuit_move_after_section_deletion_moves_explicit_junctions_and_keeps_foreign_terminals_fixed() {
+    let (mut f, top, _, _) = deletion_case();
+    f.s.execute("electrical.unifilar.section.delete", &json!({"model":f.model,"handle":top["handle"],"at":[65.,263.],"backup_dir":f.root})).unwrap();
+    f.s.execute("electrical.unifilar.circuit.move", &json!({"model":f.model,"handles":[f.devices[2]],"column":4,"backup_dir":f.root})).unwrap();
+    let graph = f.s.execute("electrical.unifilar.network.read", &json!({"model":f.model})).unwrap();
+    let mut anchors = 0;
+    for wire in graph["wires"].as_array().unwrap() {
+        for name in ["start_node", "end_node"] {
+            if !wire[name].is_null() {
+                assert_eq!(wire[name]["at"][0], 132.5);
+                anchors += 1;
+            }
+        }
+        let path = f.path(&wire["handle"]);
+        assert!(path.windows(2).all(|p| (p[0][0] - p[1][0]).abs() < 1e-6 || (p[0][1] - p[1][1]).abs() < 1e-6));
+    }
+    assert!(anchors >= 3);
+    assert_eq!(dot_count(&f), 2);
+}
