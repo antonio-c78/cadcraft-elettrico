@@ -401,8 +401,11 @@ table data and route dependencies. Room deletion uses its native confirmation fl
 
 ## Unifilar logical-section deletion
 
-For a native wire, **Elimina tratto...** starts a point picker with a highlighted
-preview and confirmation. A section runs between electrical connections (device
+For a native wire, right-click **Elimina tratto...** uses the menu's original
+world point to highlight the logical section immediately. One left click deletes
+that fixed section; Escape cancels. The preview is a continuous selection-colored
+stroke of constant screen width, without filled geometry or a confirmation window.
+Invoking the same action without a context point uses hover preview and one click. A section runs between electrical connections (device
 terminals, real branches, PE/bus attachments or free ends); bends and ordinary
 crossings do not split it. Bars retain their separate whole-bar deletion flow.
 Escape restores the original selection without changing the drawing.
@@ -417,5 +420,5 @@ handles; they survive DXF round trips and follow circuit column moves. Opening a
 drawing does not rewrite existing routes.
 
 Commands: `electrical.unifilar.section.delete {model,handle?,at:[x,y],backup_dir?}`
-for automation; `.section.prepare` and interactive `.section.place` for the UI.
+for automation; `.section.prepare {model,handle?,at?,backup_dir?}` and interactive `.section.place` for the UI.
 The explicit low-level `.link.delete` API retains whole-link semantics.

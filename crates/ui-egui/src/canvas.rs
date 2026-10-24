@@ -124,6 +124,8 @@ pub struct CanvasState {
     /// The right-click that opened the shortcut menu held Shift or Ctrl: it is the object snap
     /// menu ([`crate::context_menu`]).
     pub snap_menu: bool,
+    /// Unsnapped world point that opened the idle shortcut menu.
+    pub context_point: Option<Vec2>,
     /// Tab was pressed over a snap marker: show the next candidate ([`SnapCycle`]).
     pub snap_tab: bool,
     pub snap_cycle: Option<SnapCycle>,
@@ -1579,6 +1581,9 @@ pub fn show(app: &mut CadApp, ui: &mut egui::Ui) {
     }
     // Right-click on a grip with options (polyline vertex, line end…) opens the grip menu.
     if inside && pressed_secondary && idle && !app.canvas.snap_menu {
+        if let Some(p) = hover_pos {
+            crate::context_menu::capture_point(app, xf.to_world(p), scale);
+        }
         app.canvas.grip_menu = grip_at(app, &xf, hover_pos).filter(|g| !grip_options(app, *g).is_empty());
     }
     crate::dyngrips::menu(app, ui.ctx(), &xf);
@@ -1810,11 +1815,18 @@ pub fn show(app: &mut CadApp, ui: &mut egui::Ui) {
         app.canvas
             .cursor
             .or_else(|| app.session.electrical.as_ref().and_then(|p| p.point))
-            .or_else(|| app.session.electrical_room.as_ref().and_then(|d| d.points.last().copied())),
+            .or_else(|| app.session.electrical_room.as_ref().and_then(|d| d.points.last().copied()))
+            .or_else(|| app.session.unifilar_section.as_ref().map(|_| app.session.cursor)),
         app.session.prompting(),
     ) {
         let ents = app.session.preview(c);
-        if !ents.is_empty()
+        if app.session.running.as_ref().is_some_and(|r| r.id == "electrical.unifilar.section.place") {
+            for e in &ents {
+                if let cadcraft_doc::EntityKind::Line(l) = &e.kind {
+                    painter.line_segment([xf.to_screen(l.a.xy()), xf.to_screen(l.b.xy())], Stroke::new(3.0, t.selection));
+                }
+            }
+        } else if !ents.is_empty()
             && let Ok(st) = app.session.state()
         {
             let list = rebuilt_preview(&st.doc, ents.iter(), scale);
@@ -1838,11 +1850,14 @@ pub fn show(app: &mut CadApp, ui: &mut egui::Ui) {
             painter.rect_stroke(r, 0.0, st, egui::StrokeKind::Middle);
         }
     }
+    // A fixed deletion preview asks for a click, not a new drafting point.
+    let section_fixed = app.session.running.as_ref().is_some_and(|r| r.id == "electrical.unifilar.section.place")
+        && app.session.unifilar_section.as_ref().is_some_and(|d| d.chosen());
     // Acquired tracking points and the polar / tracking paths under the cursor.
-    if app.canvas.cursor.is_some() {
+    if !section_fixed && app.canvas.cursor.is_some() {
         draw_tracking(&painter, &xf, &app.session.tracking.acquired, app.canvas.track.as_ref(), view.height * 4.0);
     }
-    if let (Some(hit), Some(_)) = (app.canvas.snap, app.canvas.cursor) {
+    if !section_fixed && let (Some(hit), Some(_)) = (app.canvas.snap, app.canvas.cursor) {
         draw_snap_marker(&painter, xf.to_screen(hit.point), &hit);
     }
     draw_tiles(app, ui, &tiles);
@@ -1868,7 +1883,8 @@ pub fn show(app: &mut CadApp, ui: &mut egui::Ui) {
         if let Some(hp) = hover_pos {
             draw_crosshair(app, &painter, rect, hp, selecting);
         }
-        if app.session.settings.dynmode
+        if !section_fixed
+            && app.session.settings.dynmode
             && let Some(hp) = hover_pos
         {
             // A stretched grip shows its dimensions instead of the pointer boxes.

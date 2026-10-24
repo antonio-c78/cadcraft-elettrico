@@ -1319,10 +1319,11 @@ fn section_preview_cancel_and_failed_backup_leave_the_entire_drawing_unchanged()
     use cadcraft_engine::{Input, geom::Vec2};
     let (mut f, top, _, _) = deletion_case();
     let before = f.s.state().unwrap().doc.clone();
-    f.s.execute("electrical.unifilar.section.prepare", &json!({"model":f.model,"handle":top["handle"]})).unwrap();
+    f.s.execute("electrical.unifilar.section.prepare", &json!({"model":f.model,"handle":top["handle"],"at":[65.,263.]})).unwrap();
     f.s.start("electrical.unifilar.section.place").unwrap();
     assert!(!f.s.preview(Vec2::new(65., 263.)).is_empty());
-    f.s.input(Input::Point(Vec2::new(65., 263.))).unwrap();
+    assert!(f.s.unifilar_section.as_ref().unwrap().chosen());
+    assert!(f.s.preview(Vec2::new(65., 263.)).iter().all(|e| matches!(&e.kind, EntityKind::Line(_))));
     assert!(Arc::ptr_eq(&before, &f.s.state().unwrap().doc));
     f.s.input(Input::Cancel).unwrap();
     assert!(f.s.unifilar_section.is_none());
@@ -1383,5 +1384,41 @@ fn a_circuit_move_after_section_deletion_moves_explicit_junctions_and_keeps_fore
         assert!(path.windows(2).all(|p| (p[0][0] - p[1][0]).abs() < 1e-6 || (p[0][1] - p[1][1]).abs() < 1e-6));
     }
     assert!(anchors >= 3);
+    assert_eq!(dot_count(&f), 2);
+}
+
+#[test]
+fn right_click_section_is_ready_immediately_and_one_click_deletes_that_exact_span() {
+    use cadcraft_engine::{Input, geom::Vec2};
+    let (mut f, top, bridge, _) = deletion_case();
+    let before = f.s.doc().unwrap().clone();
+    f.s.execute("electrical.unifilar.section.prepare", &json!({"model":f.model,"handle":bridge["handle"],"at":[65.,235.],"backup_dir":f.root}))
+        .unwrap();
+    f.s.start("electrical.unifilar.section.place").unwrap();
+    assert!(f.s.unifilar_section.as_ref().unwrap().chosen());
+    let preview = f.s.preview(Vec2::new(65., 263.));
+    assert!(!preview.is_empty());
+    assert!(preview.iter().all(|e| matches!(&e.kind,EntityKind::Line(l) if l.a.y==235.&&l.b.y==235.)));
+    // Moving the cursor after choosing the menu must not retarget the deletion.
+    f.s.input(Input::Point(Vec2::new(65., 263.))).unwrap();
+    assert!(f.s.running.is_none());
+    assert!(f.s.unifilar_section.is_none());
+    assert_eq!(dot_count(&f), 2);
+    assert!(f.path(&top["handle"]).windows(2).any(|s| s[0][1] == 263. && s[1][1] == 263.));
+    f.s.undo().unwrap();
+    assert_eq!(f.s.doc().unwrap().model, before.model);
+}
+#[test]
+fn section_from_toolbar_needs_one_canvas_click_and_invalid_context_preserves_selection() {
+    use cadcraft_engine::{Input, geom::Vec2};
+    let (mut f, _, bridge, _) = deletion_case();
+    let h = Handle::parse_hex(bridge["handle"].as_str().unwrap()).unwrap();
+    f.s.set_selection(vec![h]);
+    assert!(f.s.execute("electrical.unifilar.section.prepare", &json!({"model":f.model,"handle":bridge["handle"],"at":[0.,0.]})).is_err());
+    assert_eq!(f.s.selection(), vec![h]);
+    f.s.execute("electrical.unifilar.section.prepare", &json!({"model":f.model,"handle":bridge["handle"],"backup_dir":f.root})).unwrap();
+    f.s.start("electrical.unifilar.section.place").unwrap();
+    f.s.input(Input::Point(Vec2::new(65., 235.))).unwrap();
+    assert!(f.s.running.is_none());
     assert_eq!(dot_count(&f), 2);
 }

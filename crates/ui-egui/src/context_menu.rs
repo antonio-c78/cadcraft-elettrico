@@ -286,6 +286,40 @@ pub fn groups_ui(ui: &mut egui::Ui, groups: &[Vec<Entry>], clicked: &mut Option<
     }
 }
 
+/// Capture the opening click before the pointer moves into the menu. A native
+/// wire under that click becomes the target, without an extra left-click selection.
+pub(crate) fn capture_point(app: &mut CadApp, at: cadcraft_geom::Vec2, scale: f64) {
+    app.canvas.context_point = Some(at);
+    let picked = app
+        .session
+        .doc()
+        .ok()
+        .and_then(|doc| cadcraft_engine::select::pick(doc, &app.session.space(), at, (app.session.settings.pickbox / scale.max(1e-12)).max(1e-6)))
+        .filter(|h| {
+            app.session
+                .doc()
+                .is_ok_and(|d| d.entity(*h).is_some_and(|e| e.common.xdata.iter().any(|t| t.code == 1001 && t.value == "CC_UNIFILARE_LINK")))
+        });
+    if let Some(h) = picked {
+        let selected = app.session.selection();
+        if selected.len() <= 1 || !selected.contains(&h) {
+            app.session.set_selection(vec![h]);
+        }
+    }
+}
+
+fn choose_at(app: &mut CadApp, id: &str) {
+    if id == "ui.elettrico.unifilar.link.delete"
+        && let Some(at) = app.canvas.context_point
+    {
+        if let Err(e) = app.run(id, serde_json::json!({"at":[at.x,at.y]})) {
+            app.session.echo(e);
+        }
+    } else {
+        choose(app, id);
+    }
+}
+
 /// Attach the menu to the canvas response: it opens on a right-click, as the object snap menu
 /// when that click held Shift or Ctrl (`CanvasState::snap_menu`).
 pub fn show(app: &mut CadApp, resp: &egui::Response) {
@@ -303,7 +337,7 @@ pub fn show(app: &mut CadApp, resp: &egui::Response) {
     });
     match clicked {
         Some(id) if snap => choose_snap(app, &id),
-        Some(id) => choose(app, &id),
+        Some(id) => choose_at(app, &id),
         None => {}
     }
 }
@@ -358,4 +392,39 @@ pub fn in_command(app: &mut CadApp, ui: &egui::Ui, inside: bool, right_clicked: 
         choose(app, &id);
     }
     enter
+}
+
+#[cfg(test)]
+mod point_tests {
+    use super::*;
+    use cadcraft_doc::{Common, Line, RawTag, Space};
+    use cadcraft_geom::{Vec2, Vec3};
+    #[test]
+    fn right_click_captures_its_point_and_targets_the_wire_without_disrupting_bulk_selection() {
+        let mut app = CadApp::new(cadcraft_engine::Session::new(), crate::Services::default());
+        let mut native = Common::default();
+        native.xdata.push(RawTag { code: 1001, value: "CC_UNIFILARE_LINK".into() });
+        let a = app
+            .session
+            .doc_mut()
+            .unwrap()
+            .add(&Space::Model, native.clone(), EntityKind::Line(Line { a: Vec3::ZERO, b: Vec3::new(20., 0., 0.) }))
+            .unwrap();
+        let b = app
+            .session
+            .doc_mut()
+            .unwrap()
+            .add(&Space::Model, native, EntityKind::Line(Line { a: Vec3::new(0., 10., 0.), b: Vec3::new(20., 10., 0.) }))
+            .unwrap();
+        app.session.set_selection(vec![a]);
+        capture_point(&mut app, Vec2::new(7., 10.), 10.);
+        assert_eq!(app.session.selection(), vec![b]);
+        app.session.cursor = Vec2::new(300., 300.);
+        assert_eq!(app.canvas.context_point, Some(Vec2::new(7., 10.)));
+        app.session.set_selection(vec![a, b]);
+        capture_point(&mut app, Vec2::new(7., 0.), 10.);
+        assert_eq!(app.session.selection(), vec![a, b]);
+        capture_point(&mut app, Vec2::new(300., 300.), 10.);
+        assert_eq!(app.session.selection(), vec![a, b]);
+    }
 }

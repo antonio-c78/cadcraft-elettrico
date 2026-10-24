@@ -192,7 +192,14 @@ fn run(s: &mut Session, p: &Value) -> Result<Value> {
     commit(s, &d)
 }
 fn prepare(s: &mut Session, p: &Value) -> Result<Value> {
-    s.unifilar_section = Some(build(s, p)?);
+    let mut d = build(s, p)?;
+    if !p["at"].is_null() {
+        let at: [f64; 2] = serde_json::from_value(p["at"].clone()).map_err(|_| err("Indica at: [x,y]."))?;
+        let picked = d.graph.pick(d.target, Vec2::new(at[0], at[1]), (s.pixel_size() * s.settings.pickbox * 1.5).max(1.))?;
+        rewritten(&d, &picked.1)?;
+        d.chosen = Some(picked);
+    }
+    s.unifilar_section = Some(d);
     s.set_selection(vec![]);
     Ok(json!({"prepared":true}))
 }
@@ -228,38 +235,32 @@ impl Interactive for Place {
         "electrical.unifilar.section.place"
     }
     fn prompt(&self, s: &Session) -> Prompt {
-        let chosen = s.unifilar_section.as_ref().is_some_and(Draft::chosen);
-        Prompt::new(
-            if chosen {
-                "Controlla il tratto evidenziato; Invio conferma, Esc annulla"
-            } else {
-                "Clicca sul tratto da eliminare: termina alle connessioni; Esc annulla"
-            },
-            Accept::POINT,
-        )
-        .kw(&["Conferma", "Altro"])
+        let draft = s.unifilar_section.as_ref();
+        let label = if draft.is_some_and(Draft::chosen) {
+            "Clic sinistro elimina il tratto evidenziato; Esc annulla"
+        } else {
+            "Clicca sul tratto evidenziato per eliminarlo; Esc annulla"
+        };
+        Prompt::new(draft.and_then(|d| d.error.as_deref()).unwrap_or(label), Accept::POINT).kw(&["Conferma"])
     }
     fn input(&mut self, s: &mut Session, input: Input) -> Result<Step> {
         let mut d = s.unifilar_section.clone().ok_or_else(|| err("Selezione del tratto assente."))?;
         valid(s, &d)?;
         match input {
             Input::Point(p) => {
-                let picked = d.graph.pick(d.target, p, (s.pixel_size() * s.settings.pickbox * 1.5).max(1.));
-                match picked.and_then(|picked| {
-                    rewritten(&d, &picked.1)?;
-                    Ok(picked)
-                }) {
-                    Ok(picked) => {
-                        d.chosen = Some(picked);
-                        d.error = None;
-                    }
-                    Err(e) => {
-                        d.chosen = None;
-                        d.error = Some(e.to_string());
+                if d.chosen.is_none() {
+                    let picked = d.graph.pick(d.target, p, (s.pixel_size() * s.settings.pickbox * 1.5).max(1.));
+                    match picked {
+                        Ok(picked) => d.chosen = Some(picked),
+                        Err(e) => {
+                            d.error = Some(e.to_string());
+                            s.unifilar_section = Some(d);
+                            return Ok(Step::Continue);
+                        }
                     }
                 }
-                s.unifilar_section = Some(d);
-                Ok(Step::Continue)
+                commit(s, &d)?;
+                Ok(Step::Done)
             }
             Input::Enter => {
                 commit(s, &d)?;
@@ -268,12 +269,6 @@ impl Interactive for Place {
             Input::Keyword(k) if k.eq_ignore_ascii_case("conferma") => {
                 commit(s, &d)?;
                 Ok(Step::Done)
-            }
-            Input::Keyword(k) if k.eq_ignore_ascii_case("altro") => {
-                d.chosen = None;
-                d.error = None;
-                s.unifilar_section = Some(d);
-                Ok(Step::Continue)
             }
             Input::Cancel => Ok(Step::Cancel),
             _ => Ok(Step::Continue),
@@ -285,20 +280,6 @@ impl Interactive for Place {
             return vec![];
         }
         let picked = d.chosen.clone().or_else(|| d.graph.pick(d.target, p, (s.pixel_size() * s.settings.pickbox * 1.5).max(1.)).ok());
-        picked
-            .map(|(path, _)| {
-                path.windows(2)
-                    .filter_map(|p| {
-                        let delta = p[1] - p[0];
-                        let len = delta.len();
-                        if len < 1e-7 {
-                            return None;
-                        }
-                        let n = Vec2::new(-delta.y, delta.x) / len * (s.pixel_size() * 2.).max(0.08);
-                        Some(EntityKind::Solid(Solid { corners: [(p[0] + n).to3(0.), (p[1] + n).to3(0.), (p[1] - n).to3(0.), (p[0] - n).to3(0.)] }))
-                    })
-                    .collect()
-            })
-            .unwrap_or_default()
+        picked.map(|(path, _)| path.windows(2).map(|p| line(p[0], p[1])).collect()).unwrap_or_default()
     }
 }

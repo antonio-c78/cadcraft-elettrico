@@ -14,7 +14,10 @@ pub(super) fn command(app: &mut CadApp, id: &str, p: &Value) -> Result<Value, St
     if id == "ui.elettrico.unifilar.link.delete" {
         let object = app.run("electrical.unifilar.link.read", p.clone())?;
         if object["link"]["kind"] != "bus" {
-            app.run("electrical.unifilar.section.prepare", json!({"model":super::unifilar_browser::path(app),"handle":object["handle"]}))?;
+            app.run(
+                "electrical.unifilar.section.prepare",
+                json!({"model":super::unifilar_browser::path(app),"handle":object["handle"],"at":p["at"]}),
+            )?;
             app.start("electrical.unifilar.section.place");
             app.elettrico.unifilar_connections = State::default();
             return Ok(json!({"choosing_section":true}));
@@ -50,41 +53,6 @@ pub(super) fn command(app: &mut CadApp, id: &str, p: &Value) -> Result<Value, St
     Ok(json!({"placing":true}))
 }
 pub(super) fn show(app: &mut CadApp, ctx: &egui::Context) {
-    if app.session.running.as_ref().is_some_and(|r| r.id == "electrical.unifilar.section.place") {
-        let chosen = app.session.unifilar_section.as_ref().is_some_and(|d| d.chosen());
-        let error = app.session.unifilar_section.as_ref().and_then(|d| d.error.clone());
-        let mut action = None;
-        egui::Window::new("Elimina tratto — Unifilare")
-            .id(egui::Id::new("unifilar.section.delete"))
-            .default_pos(egui::pos2(ctx.content_rect().right() - 430., ctx.content_rect().top() + 120.))
-            .resizable(false)
-            .show(ctx, |ui| {
-                ui.label(if chosen { "Controlla il tratto evidenziato prima di confermare." } else { "Clicca sul tratto del filo da eliminare." });
-                ui.label("La selezione termina alle connessioni. Curve e cambi di direzione fanno parte dello stesso tratto.");
-                ui.label("Gli altri rami restano collegati. I pallini saranno aggiornati automaticamente.");
-                if let Some(error) = &error {
-                    ui.colored_label(egui::Color32::RED, error);
-                }
-                ui.horizontal(|ui| {
-                    if ui.add_enabled(chosen, egui::Button::new("Elimina tratto")).clicked() {
-                        action = Some("Conferma");
-                    }
-                    if ui.add_enabled(chosen, egui::Button::new("Scegli altro tratto")).clicked() {
-                        action = Some("Altro");
-                    }
-                    if ui.button("Annulla").clicked() {
-                        action = Some("cancel");
-                    }
-                });
-            });
-        if let Some(a) = action {
-            if a == "cancel" {
-                app.session.cancel();
-            } else {
-                let _ = app.cmdline(a);
-            }
-        }
-    }
     let active = app.session.running.as_ref().is_some_and(|r| r.id == "electrical.unifilar.link.place");
     if !active && app.elettrico.unifilar_connections.placing {
         app.session.unifilar_link = None;
