@@ -12,13 +12,13 @@ non saranno implementate e collaudate le operazioni descritte qui.
 
 ## Contenitore e contenuti
 
-L'estensione scelta per il progetto è `.cceproj`. Il contenitore sarà un archivio
+L'estensione scelta per il progetto è `.cce` (CADCraft Elettrico). Il contenitore sarà un archivio
 ZIP con file JSON UTF-8 e disegni DXF. La struttura rimarrà documentata e leggibile
 con strumenti comuni; non richiederà un database installato o servizi online.
 L'associazione dell'estensione a Windows avverrà con l'implementazione.
 
 ```text
-Villetta.cceproj
+Villetta.cce
   manifest.json
   project.json
   model.json
