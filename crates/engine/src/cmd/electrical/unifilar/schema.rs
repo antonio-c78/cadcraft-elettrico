@@ -69,12 +69,13 @@ fn local(parent: &std::path::Path, name: &str) -> Result<std::path::PathBuf> {
     }
     Ok(parent.join(p))
 }
-pub(super) fn load(path: &str) -> Result<(Layout, Vec<Symbol>, String)> {
+pub(super) fn load(s: &Session, path: &str) -> Result<(Layout, Vec<Symbol>, String)> {
+    let path = crate::project::model(s).unwrap_or(path);
     if path.len() > 32768 {
         return Err(bad(CMD, "Percorso troppo lungo."));
     }
     let path = std::path::Path::new(path);
-    let raw: Value = serde_json::from_slice(&super::read(path, 524288)?).map_err(|e| bad(CMD, e.to_string()))?;
+    let raw: Value = serde_json::from_slice(&super::project_read(s, path, 524288)?).map_err(|e| bad(CMD, e.to_string()))?;
     if raw["format"] != "cadcraft-unifilar-template" || raw["version"] != 1 || raw["units"] != "mm" {
         return Err(bad(CMD, "Modello non supportato."));
     }
@@ -82,7 +83,7 @@ pub(super) fn load(path: &str) -> Result<(Layout, Vec<Symbol>, String)> {
     validate(&layout)?;
     let parent = path.parent().unwrap_or_else(|| std::path::Path::new("."));
     let catalog_path = local(parent, raw["catalog"].as_str().ok_or_else(|| bad(CMD, "Catalogo non configurato."))?)?;
-    let catalog: Catalog = serde_json::from_slice(&super::read(&catalog_path, 2 * 1024 * 1024)?).map_err(|e| bad(CMD, e.to_string()))?;
+    let catalog: Catalog = serde_json::from_slice(&super::project_read(s, &catalog_path, 2 * 1024 * 1024)?).map_err(|e| bad(CMD, e.to_string()))?;
     if catalog.format != "cadcraft-unifilar-symbols" || catalog.version != 1 || catalog.symbols.is_empty() || catalog.symbols.len() > 512 {
         return Err(bad(CMD, "Catalogo non supportato."));
     }
@@ -176,7 +177,7 @@ pub(super) fn validate(l: &Layout) -> Result<()> {
 }
 pub(super) fn catalog(s: &mut Session, p: &Value) -> Result<Value> {
     let path = p["model"].as_str().ok_or_else(|| bad(CMD, "Indica il modello."))?;
-    let (layout, symbols, library) = load(path)?;
+    let (layout, symbols, library) = load(s, path)?;
     let sheet = super::placement::sheet(s, &layout)?;
     Ok(json!({"layout":sheet,"symbols":symbols,"library":library}))
 }

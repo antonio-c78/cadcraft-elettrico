@@ -726,7 +726,7 @@ fn prepare(s: &mut Session, p: &Value) -> Result<Value> {
     if s.running.is_some() {
         return Err(err("Termina il comando corrente."));
     }
-    let (layout, _, _) = schema::load(p["model"].as_str().ok_or_else(|| err("Indica il modello unifilare."))?)?;
+    let (layout, _, _) = schema::load(s, p["model"].as_str().ok_or_else(|| err("Indica il modello unifilare."))?)?;
     let layout = placement::sheet(s, &layout)?;
     let env = Arc::new(Env::new(s.doc()?, &layout)?);
     let target = p.get("handle").map(|v| handle(v.as_str().unwrap_or(""))).transpose()?;

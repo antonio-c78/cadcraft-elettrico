@@ -37,6 +37,16 @@ impl Library {
         self.symbols.iter().filter(|symbol| symbol.is_some()).count()
     }
 
+    pub fn load_project(session: &cadcraft_engine::Session, path: &str, components: &[Component]) -> Result<Self, String> {
+        if let Some(bytes) = cadcraft_engine::project::resource(session, path, 32 * 1024 * 1024).map_err(|e| e.to_string())? {
+            let hooks = cadcraft_engine::cmd::file::io().ok_or("Lettore DXF assente.")?;
+            let drawing = (hooks.read)(&bytes, "drawing.dxf")?;
+            let mut library = Self::from_drawing(&drawing, "Progetto".into(), components);
+            library.source_path = path.into();
+            return Ok(library);
+        }
+        Self::load(path, components)
+    }
     pub fn load(path: &str, components: &[Component]) -> Result<Self, String> {
         let bytes = read_library(path)?;
         let hooks = cadcraft_engine::cmd::file::io().ok_or("Lettore DXF non disponibile.")?;

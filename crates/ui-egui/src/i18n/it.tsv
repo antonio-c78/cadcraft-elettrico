@@ -1252,3 +1252,19 @@ menu	Modify	Edita
 	Delete unifilar section	Elimina tratto unifilare
 	Prepare unifilar section deletion	Prepara eliminazione tratto unifilare
 	Choose unifilar section	Scegli tratto unifilare
+
+# Electrical project sheets and page references
+	Add drawing to project	Aggiungi disegno al progetto
+	Close electrical project	Chiudi progetto elettrico
+	Create electrical project	Crea progetto elettrico
+	Duplicate project sheet	Duplica foglio di progetto
+	Follow page reference	Vai al rimando collegato
+	Insert page reference	Inserisci rimando tra fogli
+	List project sheets	Elenco fogli di progetto
+	Open electrical project	Apri progetto elettrico
+	Open project sheet	Apri foglio di progetto
+	Place page reference	Posiziona rimando tra fogli
+	Prepare page reference	Prepara rimando tra fogli
+	Remove project sheet	Elimina foglio di progetto
+	Save electrical project	Salva progetto elettrico
+	Update project sheet	Aggiorna foglio di progetto

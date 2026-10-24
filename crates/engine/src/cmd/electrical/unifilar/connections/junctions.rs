@@ -133,7 +133,7 @@ pub(super) fn ready_target(d: &mut Draft) -> Result<()> {
     Ok(())
 }
 pub(super) fn graph_read(s: &mut Session, p: &Value) -> Result<Value> {
-    let (layout, _, _) = schema::load(p["model"].as_str().ok_or_else(|| err("Indica il modello."))?)?;
+    let (layout, _, _) = schema::load(s, p["model"].as_str().ok_or_else(|| err("Indica il modello."))?)?;
     let env = Env::new(s.doc()?, &placement::sheet(s, &layout)?)?;
     validate_graph(&env.links)?;
     let mut junctions = BTreeMap::new();

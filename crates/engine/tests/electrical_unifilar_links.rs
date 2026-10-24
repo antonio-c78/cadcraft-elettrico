@@ -122,6 +122,32 @@ impl Drop for Fixture {
     }
 }
 #[test]
+fn project_references_are_real_wire_terminals_and_embedded_catalog_survives_missing_sources() {
+    let mut f = fixture();
+    // The synthetic connection fixture has no title-field template: add a declared, unused DXF
+    // dependency to exercise the same portable resource collector as a production sheet.
+    let mut model: Value = serde_json::from_slice(&std::fs::read(&f.model).unwrap()).unwrap();
+    model["template"] = json!("empty.dxf");
+    std::fs::write(&f.model, model.to_string()).unwrap();
+    std::fs::write(f.root.join("empty.dxf"), cadcraft_io::write(&Drawing::new_metric(), "empty.dxf").unwrap()).unwrap();
+    f.s.execute("electrical.project.new", &json!({"name":"Portable"})).unwrap();
+    f.s.execute("electrical.project.add", &json!({"model":f.model})).unwrap();
+    let end = f.s.execute("electrical.project.reference.insert", &json!({"at":[27.5,282.5]})).unwrap();
+    let wire = f.link(json!({"version":3,"kind":"wire","from":{"handle":end["handle"],"port":"in"},"to":f.port(0,"in"),"y":285.}));
+    assert_eq!(f.path(&wire["handle"]).first().copied(), Some([27.5, 282.5]));
+    let file = f.root.join("project.cce");
+    f.s.execute("electrical.project.save", &json!({"path":file})).unwrap();
+    std::fs::rename(&f.model, f.root.join("original-renamed.json")).unwrap();
+    let mut other = Session::empty();
+    other.execute("open", &json!({"path":file})).unwrap();
+    let cat = other.execute("electrical.unifilar.catalog", &json!({"model":"missing-model.json"})).unwrap();
+    assert!(!cat["symbols"].as_array().unwrap().is_empty());
+    other
+        .execute("electrical.unifilar.prepare", &json!({"model":"missing-model.json","id":"dev","fields":{"sigla":"Q9"},"backup_dir":f.root}))
+        .unwrap();
+    assert!(other.execute("electrical.unifilar.link.read", &json!({"handle":wire["handle"]})).is_ok());
+}
+#[test]
 fn symbol_axis_is_always_the_column_center_even_with_legacy_offsets() {
     let mut f = fixture();
     let mut model: Value = serde_json::from_slice(&std::fs::read(&f.model).unwrap()).unwrap();

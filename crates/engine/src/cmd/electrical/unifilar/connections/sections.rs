@@ -23,7 +23,7 @@ fn build(s: &Session, p: &Value) -> Result<Draft> {
     if s.running.is_some() {
         return Err(err("Termina il comando corrente."));
     }
-    let (layout, _, _) = schema::load(p["model"].as_str().ok_or_else(|| err("Indica il modello."))?)?;
+    let (layout, _, _) = schema::load(s, p["model"].as_str().ok_or_else(|| err("Indica il modello."))?)?;
     let layout = placement::sheet(s, &layout)?;
     let target = selected(s, p)?;
     let env = Env::new(s.doc()?, &layout)?;

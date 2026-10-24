@@ -46,6 +46,10 @@ impl CadApp {
         if crate::elettrico::request_editor_close(self, i) {
             return;
         }
+        if self.session.docs.get(i).is_some_and(|d| cadcraft_engine::project::contains(&self.session, d.uid)) {
+            let _ = self.run("close", json!({"index":i}));
+            return;
+        }
         match self.session.docs.get(i) {
             Some(d) => {
                 let uid = d.uid;
@@ -71,6 +75,9 @@ impl CadApp {
     /// about each drawing first and quit once all are dealt with. Returns whether the close has to
     /// wait (the caller then cancels the window close).
     pub fn request_quit(&mut self) -> bool {
+        if !self.quit_confirmed && crate::elettrico::project::request_quit(self) {
+            return true;
+        }
         if self.quit_confirmed || !self.session.docs.iter().any(|d| d.is_dirty()) {
             return false;
         }

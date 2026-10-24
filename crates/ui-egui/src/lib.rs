@@ -509,6 +509,12 @@ impl CadApp {
             Err(e) => self.set_status(e),
             Ok(v) => {
                 self.ui.start_tab = false;
+                if v["sheets"].is_array() && v["open"] == true {
+                    let _ = docking::command(self, false, &json!({"operation":"open","panel":"projectSheets"}));
+                    if let Some(path) = self.session.project.as_ref().and_then(|p| p.path.clone()) {
+                        self.remember_recent(path);
+                    }
+                }
                 self.canvas.zoom_pending = true;
                 let doc = v.get("index").and_then(Value::as_u64).and_then(|i| self.session.docs.get(usize::try_from(i).ok()?));
                 if let Some(path) = doc.and_then(|d| d.path.clone()) {
@@ -641,7 +647,10 @@ impl CadApp {
         }
         let has_doc = !self.session.docs.is_empty() && !self.ui.start_tab;
         egui::CentralPanel::default().frame(egui::Frame::NONE.fill(t.canvas)).show(ui, |ui| {
-            if has_doc {
+            if has_doc
+                || self.ui.docking.layout.contains(&docking::Panel::ProjectSheets)
+                || self.ui.docking.layout.contains(&docking::Panel::ElectricalTools)
+            {
                 docking::show(self, ui);
             } else {
                 chrome::start_page(self, ui);

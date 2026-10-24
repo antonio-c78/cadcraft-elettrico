@@ -16,6 +16,12 @@ const RECENT_CLEAR: &str = "ui.recent.clear";
 /// UI-only commands: (id, label, menu path, shortcut).
 pub const UI_COMMANDS: &[(&str, &str, &[&str], Option<&str>)] = &[
     ("ui.elettrico.calibrate", "Scala da misura nota...", &["Elettrico", "Scala da misura nota..."], None),
+    ("ui.elettrico.project", "Fogli di progetto…", &["Elettrico", "Progetto", "Fogli di progetto…"], None),
+    ("ui.elettrico.project.save", "Salva progetto", &["Elettrico", "Progetto", "Salva progetto"], None),
+    ("ui.elettrico.project.saveas", "Salva progetto con nome…", &["Elettrico", "Progetto", "Salva progetto con nome…"], None),
+    ("ui.elettrico.project.reference", "Rimando tra fogli…", &["Elettrico", "Progetto", "Rimando tra fogli…"], None),
+    ("ui.elettrico.project.follow", "Vai al rimando collegato", &["Elettrico", "Progetto", "Vai al rimando collegato"], None),
+    ("ui.elettrico.toolbar", "Barra strumenti mobile", &["Elettrico", "Barra strumenti mobile"], None),
     ("ui.elettrico.unifilar.new", "Nuovo schema unifilare...", &["Elettrico", "Schemi unifilari", "Nuovo schema unifilare..."], None),
     ("ui.elettrico.unifilar.symbols", "Inserisci apparecchio...", &["Elettrico", "Schemi unifilari", "Inserisci apparecchio..."], None),
     ("ui.elettrico.unifilar.circuit.move", "Sposta circuito...", &["Elettrico", "Schemi unifilari", "Sposta circuito..."], None),

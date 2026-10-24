@@ -11,6 +11,7 @@ mod edit;
 mod library_editor;
 mod manager;
 mod preview;
+pub(crate) mod project;
 mod rooms;
 mod symbol;
 mod unifilar;
@@ -30,6 +31,7 @@ fn catalog_environment() -> Option<String> {
 }
 
 pub struct State {
+    project: project::State,
     pub open: bool,
     pub settings_open: bool,
     capacity: u8,
@@ -61,6 +63,7 @@ pub struct State {
 impl Default for State {
     fn default() -> Self {
         Self {
+            project: project::State::default(),
             open: false,
             settings_open: false,
             capacity: 3,
@@ -120,6 +123,9 @@ impl State {
 }
 
 pub fn route(app: &mut CadApp, id: &str, params: &Value) -> Option<Result<Value, String>> {
+    if let Some(result) = project::route(app, id, params) {
+        return Some(result);
+    }
     if let Some(result) = library_editor::route(app, id, params) {
         return Some(result);
     }
@@ -252,6 +258,7 @@ pub fn show(app: &mut CadApp, ctx: &egui::Context) {
     library_editor::show(app, ctx);
     unifilar::show(app, ctx);
     unifilar_browser::show(app, ctx);
+    project::show(app, ctx);
     unifilar_connections::show(app, ctx);
     unifilar_circuits::show(app, ctx);
     calibration::show(app, ctx);

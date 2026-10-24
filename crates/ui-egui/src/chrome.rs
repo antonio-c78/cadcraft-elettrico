@@ -174,48 +174,69 @@ pub fn title_and_toolbar(app: &mut CadApp, ui: &mut egui::Ui) {
     });
 }
 
-/// Electrical shortcuts use the same commands and icon controls as the rest of CADCraft.
-pub fn electrical_toolbar(app: &mut CadApp, ui: &mut egui::Ui) {
-    if !app.ui.show_toolbar {
-        return;
-    }
+/// Reusable electrical icon controls, hosted in chrome or a native dockable panel.
+pub fn electrical_tools(app: &mut CadApp, ui: &mut egui::Ui) {
     let busy = app.session.running.is_some();
     let has_doc = !app.session.docs.is_empty() && !app.ui.start_tab;
     let mut clicked = None;
-    egui::Panel::top("cc_electrical_toolbar").exact_size(36.0).frame(egui::Frame::NONE.fill(Tokens::get().chrome)).show(ui, |ui| {
-        egui::ScrollArea::horizontal().id_salt("electrical_toolbar_scroll").show(ui, |ui| {
-            ui.horizontal_centered(|ui| {
-                ui.add_space(12.0);
-                ui.label(egui::RichText::new("Elettrico").strong());
-                ui.add_space(12.0);
-                for (index, (icon, command, label, needs_doc)) in [
-                    (Icon::KnownDistanceScale, "ui.elettrico.calibrate", "Scala da misura nota...", true),
-                    (Icon::ElectricalCompose, "ui.elettrico.compose", "Componi scatola...", true),
-                    (Icon::ElectricalEdit, "ui.elettrico.edit", "Modifica scatola...", true),
-                    (Icon::ElectricalSymbol, "ui.elettrico.symbols", "Inserisci simbolo...", true),
-                    (Icon::ElectricalCatalog, "ui.elettrico.manager", "Gestione catalogo simboli...", false),
-                    (Icon::Area, "ui.elettrico.room", "Definisci ambiente...", true),
-                    (Icon::List, "ui.elettrico.rooms", "Gestione ambienti...", true),
-                ]
-                .into_iter()
-                .enumerate()
-                {
-                    if index == 1 || index == 3 || index == 5 {
-                        ui.separator();
-                    }
-                    ui.add_enabled_ui(!busy && (!needs_doc || has_doc), |ui| {
-                        if icons::button(ui, icon, 26.0, label, false).clicked() {
-                            clicked = Some(command);
-                        }
-                    });
-                    ui.add_space(4.0);
+    let width = ui.available_width().min(ui.clip_rect().width()).max(26.0);
+    let columns = (((width + 6.0) / 32.0).floor() as usize).clamp(1, 13);
+    let wrap = app.ui.docking.layout.contains(&crate::docking::Panel::ElectricalTools);
+    let draw = |ui: &mut egui::Ui| {
+        for (index, (icon, command, label, needs_doc)) in [
+            (Icon::KnownDistanceScale, "ui.elettrico.calibrate", "Scala da misura nota...", true),
+            (Icon::ElectricalCompose, "ui.elettrico.compose", "Componi scatola...", true),
+            (Icon::ElectricalEdit, "ui.elettrico.edit", "Modifica scatola...", true),
+            (Icon::ElectricalSymbol, "ui.elettrico.symbols", "Inserisci simbolo...", true),
+            (Icon::ElectricalCatalog, "ui.elettrico.manager", "Gestione catalogo simboli...", false),
+            (Icon::Area, "ui.elettrico.room", "Definisci ambiente...", true),
+            (Icon::List, "ui.elettrico.rooms", "Gestione ambienti...", true),
+            (Icon::Switcher, "ui.elettrico.project", "Fogli di progetto...", false),
+            (Icon::PageSetup, "ui.elettrico.unifilar.new", "Nuovo schema unifilare...", false),
+            (Icon::Blocks, "ui.elettrico.unifilar.symbols", "Inserisci apparecchio unifilare...", true),
+            (Icon::Line, "ui.elettrico.unifilar.link.series", "Collega simboli...", true),
+            (Icon::Move, "ui.elettrico.unifilar.circuit.move", "Sposta circuito...", true),
+            (Icon::Share, "ui.elettrico.project.reference", "Rimando tra fogli...", true),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            ui.add_enabled_ui(!busy && (!needs_doc || has_doc), |ui| {
+                if icons::button(ui, icon, 26.0, label, false).clicked() {
+                    clicked = Some(command);
                 }
             });
-        });
-    });
+            if wrap && (index + 1) % columns == 0 {
+                ui.end_row();
+            }
+        }
+    };
+    if wrap {
+        egui::Grid::new(ui.id().with("electrical.icon.grid"))
+            .num_columns(columns)
+            .min_col_width(26.0)
+            .max_col_width(26.0)
+            .spacing(egui::vec2(6.0, 6.0))
+            .show(ui, draw);
+    } else {
+        ui.horizontal(draw);
+    }
     if let Some(command) = clicked {
         app.start(command);
     }
+}
+pub fn electrical_toolbar(app: &mut CadApp, ui: &mut egui::Ui) {
+    if !app.ui.show_toolbar || app.ui.docking.layout.contains(&crate::docking::Panel::ElectricalTools) {
+        return;
+    }
+    egui::Panel::top("cc_electrical_toolbar").exact_size(36.0).frame(egui::Frame::NONE.fill(Tokens::get().chrome)).show(ui, |ui| {
+        ui.horizontal(|ui| {
+            if ui.small_button("Elettrico >").on_hover_text("Apri la barra mobile e agganciabile").clicked() {
+                app.start("ui.elettrico.toolbar");
+            }
+            electrical_tools(app, ui);
+        });
+    });
 }
 
 /// File tabs: switcher, "+", Start, open drawings.

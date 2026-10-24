@@ -1396,6 +1396,17 @@ pub fn show(app: &mut CadApp, ui: &mut egui::Ui) {
             return;
         }
     }
+    if inside
+        && dbl_primary
+        && app.session.running.is_none()
+        && let Some(hp) = hover_pos
+        && let Some(h) = cadcraft_engine::cmd::curves::pick_at(&app.session, xf.to_world(hp))
+        && app.session.doc().is_ok_and(|d| d.entity(h).is_some_and(|e| cadcraft_engine::project::references::is_reference(e)))
+    {
+        let _ = app.run("electrical.project.reference.follow", serde_json::json!({"handle":h.hex()}));
+        app.canvas.list = None;
+        return;
+    }
     // Double-click text to edit it, as in AutoCAD: TEXTEDIT with that object already picked.
     if inside
         && dbl_primary

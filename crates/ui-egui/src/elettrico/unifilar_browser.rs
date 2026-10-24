@@ -21,6 +21,9 @@ pub(super) struct State {
     error: Option<String>,
 }
 pub(super) fn path(app: &CadApp) -> String {
+    if let Some(path) = cadcraft_engine::project::model(&app.session) {
+        return path.into();
+    }
     if !app.elettrico.unifilar.model.is_empty() {
         return app.elettrico.unifilar.model.clone();
     }
@@ -54,7 +57,7 @@ pub(super) fn command(app: &mut CadApp, id: &str, p: &Value) -> Result<Value, St
             ..Default::default()
         })
         .collect();
-    let library = preview::Library::load(data["library"].as_str().ok_or("Libreria non disponibile.")?, &components)?;
+    let library = preview::Library::load_project(&app.session, data["library"].as_str().ok_or("Libreria non disponibile.")?, &components)?;
     let selected = edit.as_ref().and_then(|e| components.iter().position(|s| s.id == e["symbol"].as_str().unwrap_or("")));
     if edit.is_some() && selected.is_none() {
         return Err("Il simbolo inserito non è più nel catalogo esterno.".into());
@@ -185,7 +188,12 @@ fn form(ui: &mut egui::Ui, state: &mut State) -> Option<&'static str> {
     }
     let mut action = None;
     ui.horizontal(|ui| {
-        if state.editing.is_none() && ui.button("Modifica simbolo in nuova scheda…").clicked() {
+        if state.editing.is_none()
+            && ui
+                .add_enabled(!state.model.starts_with("cce:/"), egui::Button::new("Modifica simbolo in nuova scheda…"))
+                .on_disabled_hover_text("La definizione del progetto è congelata. Per modificare la libreria generale usa il gestore catalogo.")
+                .clicked()
+        {
             action = Some("geometry");
         }
         if state.editing.is_some() {

@@ -33,7 +33,7 @@ fn message(e: EngineError) -> String {
     }
 }
 fn build(s: &Session, p: &Value) -> Result<Draft> {
-    let (fallback, _, _) = schema::load(p["model"].as_str().ok_or_else(|| error("Indica il modello della tavola."))?)?;
+    let (fallback, _, _) = schema::load(s, p["model"].as_str().ok_or_else(|| error("Indica il modello della tavola."))?)?;
     let layout = placement::sheet(s, &fallback)?;
     let columns = scope::selected_columns(s, p)?;
     let source = columns.first().copied().ok_or_else(|| error("Seleziona un apparecchio unifilare."))?;

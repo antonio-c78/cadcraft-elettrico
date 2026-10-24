@@ -20,6 +20,7 @@ mod guard;
 pub mod lisp;
 pub mod mtext_edit;
 pub mod pointmod;
+pub mod project;
 pub mod prompt;
 mod recent;
 pub mod sample;
@@ -615,6 +616,7 @@ impl Default for MLeaderOptions {
 
 /// The editor session: open drawings, settings, the running command and the command log.
 pub struct Session {
+    pub project: Option<project::Project>,
     pub docs: Vec<DocState>,
     pub active: usize,
     pub settings: Settings,
@@ -699,6 +701,7 @@ impl Session {
     /// A session with no open drawing (the Start tab).
     pub fn empty() -> Self {
         Session {
+            project: None,
             docs: Vec::new(),
             active: 0,
             settings: Settings::default(),

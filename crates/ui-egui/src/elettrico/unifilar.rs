@@ -29,6 +29,9 @@ pub(super) fn command(app: &mut CadApp, params: &Value) -> Result<Value, String>
     if let Some(path) = params.get("model").and_then(Value::as_str) {
         state.model = path.into();
     }
+    if let Some(path) = cadcraft_engine::project::model(&app.session) {
+        state.model = path.into();
+    }
     if state.model.is_empty() {
         let catalog = app.elettrico.catalog_path.clone().or_else(super::catalog_environment);
         state.model = catalog

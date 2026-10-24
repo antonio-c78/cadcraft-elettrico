@@ -154,7 +154,7 @@ pub(super) fn prepare(s: &mut Session, p: &Value) -> Result<Value> {
     if s.running.is_some() {
         return Err(bad(CMD, "Termina il comando corrente."));
     }
-    let (layout, symbols, library) = schema::load(p["model"].as_str().ok_or_else(|| bad(CMD, "Indica il modello."))?)?;
+    let (layout, symbols, library) = schema::load(s, p["model"].as_str().ok_or_else(|| bad(CMD, "Indica il modello."))?)?;
     let layout = sheet(s, &layout)?;
     let target = if p.get("handle").is_some() {
         let h = handle(s, p)?;
@@ -221,7 +221,11 @@ pub(super) fn prepare(s: &mut Session, p: &Value) -> Result<Value> {
     if json!([fields, legacy_fields]).to_string().len() > 24000 {
         return Err(bad(CMD, "Troppi dati nel dispositivo. Abbrevia i testi."));
     }
-    let source = read_drawing(&library)?;
+    let source = if let Some(bytes) = crate::project::resource(s, &library, 32 * 1024 * 1024)? {
+        (crate::cmd::file::io().ok_or_else(|| bad(CMD, "Lettore DXF assente."))?.read)(&bytes, "drawing.dxf").map_err(|e| bad(CMD, e))?
+    } else {
+        read_drawing(&library)?
+    };
     let block = source.block(&symbol.block).ok_or_else(|| bad(CMD, "Simbolo assente dalla libreria."))?;
     let geometry = lines(&source, block.entities.iter())?;
     let backup_dir = p.get("backup_dir").and_then(Value::as_str).map(str::to_string);

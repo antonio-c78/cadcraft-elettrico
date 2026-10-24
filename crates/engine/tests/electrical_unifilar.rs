@@ -90,6 +90,10 @@ fn new_unifilar_is_independent_atomic_and_preserves_cartiglio_on_roundtrip() {
     let reopened = cadcraft_io::read(&data, "new.dxf").unwrap();
     let e = reopened.model.iter().find_map(|e| if let EntityKind::Insert(i) = &e.kind { Some(i) } else { None }).unwrap();
     assert_eq!(e.attribs.iter().find(|a| a.tag == "QUADRO").unwrap().text.value, "QG Test");
+    // A sheet manager can start after every drawing tab was closed.
+    let mut empty = Session::empty();
+    empty.execute("electrical.unifilar.new", &json!({"model":model,"fields":{"quadro":"Primo foglio"}})).unwrap();
+    assert_eq!(empty.docs.len(), 1);
     let active = s.active;
     let count = s.docs.len();
     std::fs::write(&model, config.to_string().replace("template.dxf", "../template.dxf")).unwrap();

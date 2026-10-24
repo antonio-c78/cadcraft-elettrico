@@ -16,6 +16,8 @@ pub enum Panel {
     Properties,
     #[serde(rename = "externalReferences")]
     ExternalRefs,
+    ProjectSheets,
+    ElectricalTools,
 }
 
 impl Panel {
@@ -28,6 +30,8 @@ impl Panel {
             Self::Layers => "layers",
             Self::Properties => "properties",
             Self::ExternalRefs => "externalReferences",
+            Self::ProjectSheets => "projectSheets",
+            Self::ElectricalTools => "electricalTools",
         }
     }
     fn label(self) -> &'static str {
@@ -38,6 +42,8 @@ impl Panel {
             Self::Layers => "Layers",
             Self::Properties => "Properties",
             Self::ExternalRefs => "External References",
+            Self::ProjectSheets => "Fogli di progetto",
+            Self::ElectricalTools => "Elettrico",
         }
     }
     fn default_side(self) -> Zone {
@@ -47,11 +53,11 @@ impl Panel {
             Self::QuickCalc => Zone::Right,
             Self::Layers => Zone::Right,
             Self::Properties => Zone::Right,
-            Self::ExternalRefs => Zone::Right,
+            Self::ExternalRefs | Self::ProjectSheets | Self::ElectricalTools => Zone::Right,
         }
     }
     /// Palettes outside the default arrangement, opened on request (QUICKCALC).
-    pub const ON_DEMAND: &[Self] = &[Self::QuickCalc];
+    pub const ON_DEMAND: &[Self] = &[Self::QuickCalc, Self::ProjectSheets, Self::ElectricalTools];
     fn parse(id: &str) -> Result<Self, String> {
         Self::ALL.iter().chain(Self::ON_DEMAND).copied().find(|panel| panel.id() == id).ok_or_else(|| format!("Unknown panel: {id}"))
     }
@@ -346,7 +352,18 @@ pub fn show(app: &mut crate::CadApp, ui: &mut egui::Ui) {
         |ui, panel| match panel {
             Panel::Canvas => {
                 ui.painter().rect_filled(ui.max_rect(), 0.0, t.canvas);
-                crate::canvas::show(app, ui);
+                if app.session.docs.is_empty() || app.ui.start_tab {
+                    crate::chrome::start_page(app, ui);
+                } else {
+                    crate::canvas::show(app, ui);
+                }
+            }
+            Panel::ProjectSheets => crate::elettrico::project::section(app, ui),
+            Panel::ElectricalTools => {
+                egui::ScrollArea::vertical()
+                    .id_salt("electrical.tools.scroll")
+                    .auto_shrink([false, false])
+                    .show(ui, |ui| crate::chrome::electrical_tools(app, ui));
             }
             Panel::ToolSets => crate::palettes::toolsets(app, ui),
             Panel::QuickCalc => crate::palettes::quickcalc::show(app, ui),
@@ -392,6 +409,8 @@ fn panel_limits(panel: &Panel) -> PanelLimits {
     let (min, max_width) = match panel {
         Panel::Canvas => (egui::vec2(300.0, 180.0), 1_000_000.0),
         Panel::QuickCalc => (egui::vec2(240.0, 160.0), 600.0),
+        Panel::ProjectSheets => (egui::vec2(260.0, 240.0), 720.0),
+        Panel::ElectricalTools => (egui::vec2(64.0, 100.0), 720.0),
         Panel::ToolSets => (egui::vec2(220.0, 150.0), 480.0),
         Panel::Layers | Panel::Properties | Panel::ExternalRefs => (egui::vec2(220.0, 100.0), 720.0),
     };

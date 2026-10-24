@@ -252,6 +252,7 @@ fn file_name(path: &str) -> String {
 /// needs no session, so a host can do it on a worker thread and hand the result to
 /// [`finish_open`] on the thread that owns the session.
 pub struct ReadFile {
+    project: Option<crate::project::Loaded>,
     drawing: Drawing,
     binary_dxf: bool,
     name: String,
@@ -263,7 +264,11 @@ pub fn read_file(path: &str) -> std::result::Result<ReadFile, String> {
     #[cfg(not(target_arch = "wasm32"))]
     {
         let r = std::panic::catch_unwind(|| {
-            let bytes = std::fs::read(path).map_err(|e| bad("open", format!("{path}: {e}")))?;
+            let bytes = if path.to_lowercase().ends_with(".cce") {
+                crate::project::read_file(path, 128 * 1024 * 1024)?
+            } else {
+                std::fs::read(path).map_err(|e| bad("open", format!("{path}: {e}")))?
+            };
             read_bytes(&bytes, path, Some(path.to_string()))
         });
         match r {
@@ -280,19 +285,31 @@ pub fn read_file(path: &str) -> std::result::Result<ReadFile, String> {
 
 /// Add a [`read_file`] result to the session as the active drawing: the fast half of OPEN.
 pub fn finish_open(s: &mut Session, f: ReadFile) -> Result<Value> {
-    let ReadFile { drawing, binary_dxf, name, path } = f;
+    let ReadFile { project, drawing, binary_dxf, name, path } = f;
+    if let Some(project) = project {
+        return crate::project::finish_open(s, project, path);
+    }
     let i = add_read(s, drawing, binary_dxf, &name, path);
     super::blocks::xref::after_open(s, i);
     Ok(opened(s, i, true))
 }
 
 fn read_bytes(bytes: &[u8], name: &str, path: Option<String>) -> Result<ReadFile> {
+    if name.to_lowercase().ends_with(".cce") {
+        return Ok(ReadFile {
+            project: Some(crate::project::decode(bytes)?),
+            drawing: Drawing::new_metric(),
+            binary_dxf: false,
+            name: name.into(),
+            path,
+        });
+    }
     let hooks = io().ok_or_else(|| bad("open", "file formats are not available in this build"))?;
     let drawing = (hooks.read)(bytes, name).map_err(|e| bad("open", e))?;
     // A file that isn't a drawing (an imported SVG) gives the drawing no file name: QSAVE then
     // asks where to save instead of exporting over the original.
     let path = path.filter(|p| is_drawing_file(p));
-    Ok(ReadFile { drawing, binary_dxf: cadcraft_dxf::is_binary(bytes), name: name.to_string(), path })
+    Ok(ReadFile { project: None, drawing, binary_dxf: cadcraft_dxf::is_binary(bytes), name: name.to_string(), path })
 }
 
 fn add_read(s: &mut Session, drawing: Drawing, binary_dxf: bool, name: &str, path: Option<String>) -> usize {
@@ -309,7 +326,11 @@ fn add_read(s: &mut Session, drawing: Drawing, binary_dxf: bool, name: &str, pat
 }
 
 pub(crate) fn open_bytes(s: &mut Session, bytes: &[u8], name: &str, path: Option<String>) -> Result<usize> {
-    let ReadFile { drawing, binary_dxf, name, path } = read_bytes(bytes, name, path)?;
+    let ReadFile { project, drawing, binary_dxf, name, path } = read_bytes(bytes, name, path)?;
+    if let Some(project) = project {
+        crate::project::finish_open(s, project, path)?;
+        return Ok(s.active);
+    }
     Ok(add_read(s, drawing, binary_dxf, &name, path))
 }
 
@@ -330,7 +351,11 @@ fn run_open(s: &mut Session, p: &Value) -> Result<Value> {
         let path = _path;
         #[cfg(not(target_arch = "wasm32"))]
         {
-            let bytes = std::fs::read(path).map_err(|e| bad("open", format!("{path}: {e}")))?;
+            let bytes = if path.to_lowercase().ends_with(".cce") {
+                crate::project::read_file(path, 128 * 1024 * 1024)?
+            } else {
+                std::fs::read(path).map_err(|e| bad("open", format!("{path}: {e}")))?
+            };
             let i = open_bytes(s, &bytes, path, Some(path.to_string()))?;
             super::blocks::xref::after_open(s, i);
             return Ok(opened(s, i, true));
@@ -352,6 +377,9 @@ fn run_close(s: &mut Session, p: &Value) -> Result<Value> {
         return Err(bad("close", "no such drawing"));
     }
     s.cancel();
+    if crate::project::close_tab(s, i) {
+        return ok();
+    }
     s.docs.remove(i);
     if i < s.active {
         // An earlier drawing went away: the active one shifted down by one.
@@ -364,6 +392,7 @@ fn run_close(s: &mut Session, p: &Value) -> Result<Value> {
 }
 
 fn run_closeall(s: &mut Session, _p: &Value) -> Result<Value> {
+    s.project = None;
     s.cancel();
     s.docs.clear();
     s.active = 0;
@@ -383,7 +412,7 @@ fn save_as(s: &mut Session, cmd: &str, path: &str, opts: &SaveAs) -> Result<usiz
     }
     let bytes = write_bytes(s, cmd, path, opts)?;
     let n = commit_save(s, path, &bytes, store)?;
-    if is_drawing_file(path) {
+    if !crate::project::active(s) && is_drawing_file(path) {
         let st = s.state_mut()?;
         st.binary_dxf = opts.binary;
         if let Some(v) = opts.version
@@ -422,6 +451,9 @@ fn store(path: &str, bytes: &[u8]) -> Result<()> {
 fn commit_save(s: &mut Session, path: &str, bytes: &[u8], store: impl FnOnce(&str, &[u8]) -> Result<()>) -> Result<usize> {
     s.state()?;
     store(path, bytes)?;
+    if crate::project::active(s) {
+        return Ok(bytes.len());
+    }
     if !is_drawing_file(path) {
         return Ok(bytes.len());
     }
@@ -444,6 +476,9 @@ fn saved(path: &str, bytes: usize) -> Value {
 }
 
 fn run_save(s: &mut Session, p: &Value) -> Result<Value> {
+    if crate::project::active(s) {
+        return crate::project::save(s, p);
+    }
     let path = match str_param(p, "path") {
         Some(p) => p.to_string(),
         None => s.state()?.path.clone().ok_or_else(|| bad("qsave", "drawing has no file name yet; use saveas {path}"))?,

@@ -80,6 +80,7 @@ pub fn specs() -> Vec<CommandSpec> {
     commands.extend(calibration::specs());
     commands.extend(unifilar::specs());
     commands.extend(library_editor::specs());
+    commands.extend(crate::project::specs());
     commands
 }
 

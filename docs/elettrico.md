@@ -7,7 +7,26 @@ and menu infrastructure so upstream updates remain manageable.
 The future self-contained electrical project format, data ownership, persistent
 identities, resource snapshots and implementation stages are defined in
 [Struttura del progetto elettrico CADCraft](elettrico-progetto.md). This is an
-architecture decision; current drawing saves remain unchanged.
+architecture decision with an initial implementation for testing. Independent DXF
+drawings keep their existing save behavior; project sheets are saved together in CCE.
+
+## Project sheets and page references
+
+- Elettrico → Progetto → Fogli di progetto opens a dockable sheet manager with previews,
+  properties, ordering, explicit renumbering, duplication and confirmed removal.
+- A closed sheet tab retains its drawing and unsaved edits inside the project session.
+- CCE save/open uses a bounded ZIP, SHA-256 checks, a previous-file `.bak`, a save lock
+  and an optimistic check against external changes. Saving a project never overwrites
+  the imported DXF source. Full CCE autosave recovery is not implemented yet.
+- The declared unifilar model, catalog, template and DXF library travel with the project;
+  insertion and device editing read them directly from memory. Composer/plan-symbol
+  definition capture and the global physical-material registry remain future work.
+- Rimando tra fogli guides source and destination placement. Reference terminals use the
+  existing wire engine; reference UUIDs survive renumbering. Double click follows the peer.
+  Incomplete pairs are shown explicitly and may be completed later. Duplicates receive
+  fresh identities; Undo/Redo applies to each endpoint independently.
+- Elettrico → Barra strumenti mobile reuses the original icons in the native docking
+  system: float, dock alongside existing palettes and retain the layout across restarts.
 
 ## First native interface
 

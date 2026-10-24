@@ -20,6 +20,9 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }
 log = { workspace = true }
+zip = { version = "2.4", default-features = false, features = ["deflate"] }
+sha2 = "0.10"
+uuid = { version = "1", features = ["v4", "js"] }
 # R-tree spatial index for picking, window selection and object snaps (MIT OR Apache-2.0).
 rstar = { version = "0.12", default-features = false }
 

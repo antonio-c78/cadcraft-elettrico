@@ -84,6 +84,7 @@ struct Field {
 pub(super) fn specs() -> Vec<CommandSpec> {
     let mut commands = vec![
         CommandSpec::new(CMD, "New electrical unifilar drawing", create)
+            .enabled(|_| Ok(()))
             .noundo()
             .params("{model: path_to_modello.json, fields?:{impresa,recapiti,cliente,indirizzo,quadro,titolo,data,revisione,progetto,foglio}}"),
     ];
@@ -107,13 +108,19 @@ fn read(path: &std::path::Path, limit: u64) -> Result<Vec<u8>> {
 fn read(_: &std::path::Path, _: u64) -> Result<Vec<u8>> {
     Err(bad(CMD, "I modelli locali richiedono la versione desktop."))
 }
+pub(super) fn project_read(s: &Session, path: &std::path::Path, limit: u64) -> Result<Vec<u8>> {
+    match crate::project::resource(s, &path.to_string_lossy(), limit)? {
+        Some(b) => Ok(b),
+        None => read(path, limit),
+    }
+}
 fn create(s: &mut Session, p: &Value) -> Result<Value> {
     if s.running.is_some() || s.state().is_ok_and(|d| d.block_edit.is_some()) {
         return Err(bad(CMD, "Termina il comando o la modifica corrente."));
     }
     let path = p["model"].as_str().filter(|p| !p.is_empty() && p.len() <= 32768).ok_or_else(|| bad(CMD, "Indica il modello esterno."))?;
     let model_path = std::path::Path::new(path);
-    let model_bytes = read(model_path, 524288)?;
+    let model_bytes = project_read(s, model_path, 524288)?;
     let raw_model: Value = serde_json::from_slice(&model_bytes).map_err(|e| bad(CMD, e.to_string()))?;
     let model: Model = serde_json::from_slice(&model_bytes).map_err(|e| bad(CMD, e.to_string()))?;
     if model.format != "cadcraft-unifilar-template"
@@ -130,7 +137,7 @@ fn create(s: &mut Session, p: &Value) -> Result<Value> {
         return Err(bad(CMD, "Il DXF deve essere nella cartella del modello."));
     }
     let template = model_path.parent().unwrap_or_else(|| std::path::Path::new(".")).join(file);
-    let bytes = read(&template, 10 * 1024 * 1024)?;
+    let bytes = project_read(s, &template, 10 * 1024 * 1024)?;
     let hooks = crate::cmd::file::io().ok_or_else(|| bad(CMD, "Formati file non disponibili."))?;
     let mut drawing = (hooks.read)(&bytes, &template.to_string_lossy()).map_err(|e| bad(CMD, e))?;
     if drawing.header.i64("INSUNITS", 0) != 4 || drawing.entity_count() > 10000 {
@@ -212,8 +219,22 @@ fn create(s: &mut Session, p: &Value) -> Result<Value> {
     let baseline = Arc::new(drawing.clone());
     drawing.modify_entity(handle, |e| *e = entity)?;
     let title = fields.get("quadro").map(|v| v.trim()).filter(|v| !v.is_empty()).unwrap_or("Schema unifilare").to_string();
+    let old_active = s.active;
+    let project_before = s.project.as_ref().map(|p| (p.meta.clone(), p.resources.clone()));
     let index = s.open_drawing(drawing, &title, None);
     let state = s.state_mut()?;
     state.saved = baseline;
-    Ok(json!({"index":index,"uid":state.uid,"title":title,"model":model.id,"columns":10,"unsaved":true}))
+    let uid = state.uid;
+    if s.project.is_some()
+        && let Err(e) = crate::project::add(s, &json!({"title":title,"model":path}))
+    {
+        s.docs.truncate(index);
+        s.active = old_active;
+        if let (Some(p), Some((meta, resources))) = (&mut s.project, project_before) {
+            p.meta = meta;
+            p.resources = resources;
+        }
+        return Err(e);
+    }
+    Ok(json!({"index":index,"uid":uid,"title":title,"model":model.id,"columns":10,"unsaved":true}))
 }

@@ -61,7 +61,11 @@ pub(crate) fn entries(app: &CadApp) -> Vec<Entry> {
         use cadcraft_engine::cmd::electrical::unifilar::connections;
         let item = |id: &str, label: &str| Entry::Item { label: label.into(), id: id.into(), shortcut: None, enabled: app.session.running.is_none() };
         let mut children = Vec::new();
-        if e.common.xdata.iter().any(|t| t.code == 1001 && t.value == "CC_UNIFILARE_DEVICE") {
+        if cadcraft_engine::project::references::is_reference(e) {
+            children.push(item("ui.elettrico.project.follow", "Vai al rimando collegato"));
+            children.push(item("ui.elettrico.unifilar.link.series", "Collega simboli..."));
+            children.push(item("ui.elettrico.project", "Fogli di progetto..."));
+        } else if e.common.xdata.iter().any(|t| t.code == 1001 && t.value == "CC_UNIFILARE_DEVICE") {
             children.push(item("ui.elettrico.unifilar.edit", "Modifica apparecchio..."));
             if connections::has_port(doc, *h, "in") || connections::has_port(doc, *h, "out") {
                 children.push(item("ui.elettrico.unifilar.circuit.move", "Sposta circuito..."));

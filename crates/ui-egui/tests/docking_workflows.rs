@@ -5,7 +5,7 @@ use cadcraft_ui_egui::{CadApp, Services, UiState, docking::Panel};
 use egui::{Event, Modifiers, PointerButton, vec2};
 use egui_kittest::Harness;
 use egui_kittest::kittest::Queryable;
-use serde_json::json;
+use serde_json::{Value, json};
 
 fn harness(state: Option<UiState>, width: f32, scale: f32) -> Harness<'static, CadApp> {
     let mut app = CadApp::new(Session::default(), Services::default());
@@ -40,6 +40,49 @@ fn drag(harness: &mut Harness<'_, CadApp>, from: egui::Pos2, to: egui::Pos2) {
     }
     harness.event(Event::PointerButton { pos: to, button: PointerButton::Primary, pressed: false, modifiers: Modifiers::NONE });
     harness.run_steps(4);
+}
+#[test]
+fn electrical_toolbar_floats_and_reference_wizard_changes_sheets_without_extra_windows() {
+    let mut h = harness(None, 1500.0, 1.0);
+    h.state_mut().run("electrical.project.new", json!({"name":"Test"})).unwrap();
+    h.state_mut().run("electrical.project.add", json!({"title":"Partenza"})).unwrap();
+    let source_uid = h.state().session.state().unwrap().uid;
+    h.state_mut().run("new", json!({"metric":true})).unwrap();
+    h.state_mut().run("electrical.project.add", json!({"title":"Arrivo"})).unwrap();
+    let target_uid = h.state().session.state().unwrap().uid;
+    let source = h.state().session.project.as_ref().unwrap().meta.sheets.first().unwrap().id.clone();
+    h.state_mut().run("electrical.project.switch", json!({"id":source})).unwrap();
+    h.state_mut().run("ui.elettrico.toolbar", Value::Null).unwrap();
+    h.state_mut().run("ui.dock", json!({"operation":"float","panel":"electricalTools","rect":[200,120,340,220]})).unwrap();
+    h.run_steps(3);
+    assert!(h.state().ui.docking.layout.floating.iter().any(|g| g.panels.contains(&Panel::ElectricalTools)));
+    let reference_button = h.get_by_label("Rimando tra fogli...").rect();
+    assert!(
+        reference_button.right() <= 540.0 && reference_button.bottom() <= 340.0,
+        "All electrical tools must fit inside the floating panel: {reference_button:?}"
+    );
+    let prefs = serde_json::to_value(&h.state().ui).unwrap();
+    let restored: UiState = serde_json::from_value(prefs).unwrap();
+    restored.docking.validate().unwrap();
+    assert!(restored.docking.layout.floating.iter().any(|g| g.panels.contains(&Panel::ElectricalTools)));
+    h.state_mut().run("ui.elettrico.project.reference", Value::Null).unwrap();
+    h.run_steps(3);
+    h.get_by_label("Inserisci partenza").click();
+    h.run_steps(3);
+    assert_eq!(h.state().session.state().unwrap().uid, source_uid);
+    h.state_mut().session.input(cadcraft_engine::Input::Point(cadcraft_engine::geom::Vec2::new(30., 100.))).unwrap();
+    h.run_steps(4);
+    assert_eq!(h.state().session.state().unwrap().uid, target_uid);
+    assert!(h.state().session.running.is_some());
+    h.state_mut().session.input(cadcraft_engine::Input::Point(cadcraft_engine::geom::Vec2::new(50., 100.))).unwrap();
+    h.run_steps(3);
+    assert_eq!(cadcraft_engine::project::references::inspect(&h.state().session).unwrap()[0]["status"], "connected");
+    assert!(h.state_mut().request_quit());
+    h.run_steps(3);
+    h.get_by_label("Annulla").click();
+    h.run_steps(3);
+    assert!(!h.state().quit_requested);
+    assert!(h.state().session.project.is_some());
 }
 
 #[test]

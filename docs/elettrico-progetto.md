@@ -1,14 +1,55 @@
 # Struttura del progetto elettrico CADCraft
 
-Stato: architettura definita il 24 ottobre 2026; formato e comandi da implementare.
+Stato: architettura definita il 24 ottobre 2026; prima implementazione di contenitore,
+gestore fogli e rimandi in collaudo. Il registro fisico condiviso resta futuro.
 
 Il progetto elettrico sarà un documento unico che raccoglie disegni, dati e risorse
 necessarie al lavoro. L'utente aprirà, salverà e trasferirà un solo file. Il DXF
 resterà il formato dei disegni interni e dello scambio con altri CAD.
 
 Questa decisione prepara planimetrie, schemi unifilari, morsettiere e distinta
-materiali nello stesso progetto. Il salvataggio attuale resta invariato finché
-non saranno implementate e collaudate le operazioni descritte qui.
+materiali nello stesso progetto. I DXF indipendenti continuano a usare il salvataggio
+ordinario. Le sezioni seguenti definiscono l'architettura completa; la disponibilità
+attuale è delimitata qui sotto.
+
+## Prima versione per il collaudo
+
+Elettrico → Progetto → Fogli di progetto apre il pannello con anteprime, proprietà,
+apertura, duplicazione, ordinamento e rimozione dei fogli. Un DXF aperto si aggiunge
+esplicitamente; i nuovi unifilari vengono aggiunti automaticamente al progetto aperto.
+Chiudere una scheda conserva il foglio e le sue modifiche nella sessione.
+
+Il `.cce` contiene manifest con impronte SHA-256, metadati e DXF dei fogli. Il
+salvataggio verifica il file temporaneo, conserva il precedente in `.cce.bak` e
+controlla che il file su disco non sia cambiato nel frattempo. Un `.lock` protegge
+il salvataggio concorrente. Un blocco lasciato da un arresto viene segnalato,
+non rimosso automaticamente. Salva con nome mantiene l'identità del progetto.
+
+Il modello unifilare viene incorporato con le sue dipendenze dichiarate: cartiglio,
+catalogo e libreria DXF. Si possono quindi inserire e modificare apparecchi senza
+le cartelle originali. Queste definizioni rimangono congelate: la modifica grafica
+del catalogo generale continua nel gestore, fuori dal progetto. L'acquisizione
+autonoma delle definizioni del compositore e dei simboli di planimetria resta futura:
+grafica e dati inseriti restano nei DXF, alcune modifiche richiedono il catalogo originale.
+
+Rimando tra fogli chiede la destinazione e due punti; ogni estremo è un terminale
+del motore dei fili. La coppia ha un UUID indipendente dai numeri di pagina.
+Le etichette mostrano il foglio e, negli unifilari, la colonna. Rinumerare aggiorna
+i rimandi e il campo foglio del cartiglio. Riordinare non rinumera implicitamente:
+Rinumera in ordine è un'azione distinta. Doppio clic o Vai al rimando collegato
+raggiunge e seleziona l'altro estremo.
+
+I rimandi incompleti restano segnalati e possono essere completati. Annulla e
+Ripristina agiscono sul singolo estremo. Duplicare un foglio genera nuove identità
+dei rimandi, senza unirli ai circuiti originali. I tratti restano gestiti localmente
+nei disegni; il registro globale di reti, cavi e materiali resta da implementare.
+
+Limiti iniziali: 128 fogli, 1024 estremi di rimando, 2048 file, 32 MiB per file e
+128 MiB complessivi anche dopo decompressione. I file non vengono estratti sul disco.
+Percorsi non locali, collisioni, risorse alterate e funzionalità obbligatorie
+sconosciute vengono rifiutati. Consultazione di versioni future in sola lettura,
+nuovo progetto da copia e autorecupero completo della sessione `.cce` restano futuri.
+Questa versione dispone di salvataggio esplicito e copia del progetto precedente.
 
 ## Contenitore e contenuti
 
