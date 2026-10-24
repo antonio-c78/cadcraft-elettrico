@@ -4,6 +4,11 @@ This fork adds an electrical drafting workspace to CADCraft. Keep the implementa
 in `crates/ui-egui/src/elettrico.rs` and register its actions in the existing command
 and menu infrastructure so upstream updates remain manageable.
 
+The future self-contained electrical project format, data ownership, persistent
+identities, resource snapshots and implementation stages are defined in
+[Struttura del progetto elettrico CADCraft](elettrico-progetto.md). This is an
+architecture decision; current drawing saves remain unchanged.
+
 ## First native interface
 
 - Elettrico → Scala da misura nota is the first visible electrical menu item and
