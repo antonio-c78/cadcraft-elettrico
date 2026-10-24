@@ -32,7 +32,13 @@ del catalogo generale continua nel gestore, fuori dal progetto. L'acquisizione
 autonoma delle definizioni del compositore e dei simboli di planimetria resta futura:
 grafica e dati inseriti restano nei DXF, alcune modifiche richiedono il catalogo originale.
 
-Rimando tra fogli chiede la destinazione e due punti; ogni estremo è un terminale
+Rimando tra fogli chiede Ingresso/Uscita, il foglio collegato e due punti; il secondo
+estremo riceve il tipo opposto. La freccia segue il tratto finale del filo, anche
+verticale o inclinato, indipendentemente dall’ordine con cui viene disegnato:
+in ingresso punta verso il filo locale, in uscita verso la prosecuzione. I testi
+restano orizzontali. La grafica si aggiorna dopo le modifiche dei fili; i rimandi
+precedenti vengono aggiornati ai metadati v2 senza cambiare le coppie.
+Ogni estremo è un terminale
 del motore dei fili. La coppia ha un UUID indipendente dai numeri di pagina.
 Le etichette mostrano il foglio e, negli unifilari, la colonna. Rinumerare aggiorna
 i rimandi e il campo foglio del cartiglio. Riordinare non rinumera implicitamente:

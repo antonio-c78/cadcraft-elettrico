@@ -16,7 +16,7 @@ pub(super) struct State {
     quit: bool,
     reference: bool,
     destination: String,
-    left: bool,
+    incoming: bool,
     flow: Option<Flow>,
     previews: BTreeMap<u64, (u64, Arc<cadcraft_render::DisplayList>)>,
 }
@@ -24,6 +24,7 @@ struct Flow {
     pair: String,
     destination: String,
     phase: u8,
+    next_kind: String,
 }
 fn dock(app: &mut CadApp, panel: &str) -> Result<Value, String> {
     crate::docking::command(app, false, &json!({"operation":"open","panel":panel}))
@@ -226,7 +227,12 @@ pub(crate) fn section(app: &mut CadApp, ui: &mut egui::Ui) {
                         && ends.first().is_some_and(|e| e["sheet"] != active_sheet(app))
                         && ui.button("Completa qui").clicked()
                     {
-                        action(app, &mut st, "electrical.project.reference.prepare", json!({"pair":r["id"],"direction":"left"}));
+                        action(
+                            app,
+                            &mut st,
+                            "electrical.project.reference.prepare",
+                            json!({"pair":r["id"],"kind":if r["ends"][0]["kind"] == "input" {"output"} else {"input"}}),
+                        );
                         app.start("electrical.project.reference.place");
                     }
                     for e in &ends {
@@ -270,9 +276,9 @@ pub(super) fn show(app: &mut CadApp, ctx: &egui::Context) {
                 refs.as_array().and_then(|a| a.iter().find(|r| r["id"] == flow.pair)).and_then(|r| r["ends"].as_array()).map(Vec::len).unwrap_or(0);
             if flow.phase == 1 && count == 1 {
                 action(app, &mut st, "electrical.project.switch", json!({"id":flow.destination}));
-                action(app, &mut st, "electrical.project.reference.prepare", json!({"pair":flow.pair,"direction":"left"}));
+                action(app, &mut st, "electrical.project.reference.prepare", json!({"pair":flow.pair,"kind":flow.next_kind}));
                 app.start("electrical.project.reference.place");
-                app.set_status("Inserisci l'arrivo del rimando. Esc lascia una partenza da completare.");
+                app.set_status("Inserisci il rimando sull'altro foglio. Esc lascia la coppia da completare.");
                 st.flow = Some(Flow { phase: 2, ..flow });
             } else {
                 let _ = project::references::refresh(&mut app.session);
@@ -291,24 +297,30 @@ pub(super) fn show(app: &mut CadApp, ctx: &egui::Context) {
         let mut open = true;
         let mut place = false;
         egui::Window::new("Rimando tra fogli — Elettrico").open(&mut open).resizable(false).show(ctx, |ui| {
-            ui.label("Scegli il foglio di arrivo. Poi indica la partenza e l'arrivo nei due disegni.");
-            egui::ComboBox::from_label("Foglio di arrivo")
+            ui.label("Scegli il tipo e il foglio collegato. Poi indica i due punti nei disegni.");
+            egui::ComboBox::from_label("Foglio collegato")
                 .selected_text(sheets.iter().find(|s| s.id == st.destination).map(|s| format!("{} · {}", s.number, s.title)).unwrap_or_default())
                 .show_ui(ui, |ui| {
                     for s in sheets.iter().filter(|s| s.id != active) {
                         ui.selectable_value(&mut st.destination, s.id.clone(), format!("{} · {}", s.number, s.title));
                     }
                 });
-            ui.checkbox(&mut st.left, "Freccia di partenza verso sinistra");
-            place = ui.add_enabled(!st.destination.is_empty() && app.session.running.is_none(), egui::Button::new("Inserisci partenza")).clicked();
+            ui.horizontal(|ui| {
+                ui.label("Tipo rimando");
+                ui.selectable_value(&mut st.incoming, false, "Uscita");
+                ui.selectable_value(&mut st.incoming, true, "Ingresso");
+            });
+            ui.label("La freccia segue il filo collegato, in qualsiasi direzione.");
+            place = ui.add_enabled(!st.destination.is_empty() && app.session.running.is_none(), egui::Button::new("Inserisci rimando")).clicked();
         });
         st.reference = open;
         if place {
             let pair = project::id();
-            let p = json!({"pair":pair,"direction":if st.left{"left"}else{"right"}});
+            let p = json!({"pair":pair,"kind":if st.incoming{"input"}else{"output"}});
             action(app, &mut st, "electrical.project.reference.prepare", p);
             app.start("electrical.project.reference.place");
-            st.flow = Some(Flow { pair, destination: st.destination.clone(), phase: 1 });
+            st.flow =
+                Some(Flow { pair, destination: st.destination.clone(), phase: 1, next_kind: if st.incoming { "output" } else { "input" }.into() });
             st.reference = false;
         }
     }

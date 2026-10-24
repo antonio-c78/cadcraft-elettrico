@@ -73,7 +73,7 @@ impl Metadata {
 }
 pub struct Project {
     pub reference_pair: Option<String>,
-    pub reference_direction: String,
+    pub reference_kind: String,
     pub meta: Metadata,
     pub path: Option<String>,
     pub generation: u64,
@@ -149,7 +149,7 @@ fn new(s: &mut Session, p: &Value) -> Result<Value> {
     meta.validate()?;
     s.project = Some(Project {
         reference_pair: None,
-        reference_direction: "right".into(),
+        reference_kind: "output".into(),
         meta,
         path: None,
         generation: 0,
@@ -483,7 +483,7 @@ pub fn finish_open(s: &mut Session, mut loaded: Loaded, path: Option<String>) ->
     let saved_meta = serde_json::to_value(&loaded.meta).map_err(error)?;
     s.project = Some(Project {
         reference_pair: None,
-        reference_direction: "right".into(),
+        reference_kind: "output".into(),
         meta: loaded.meta,
         path,
         generation: loaded.generation,

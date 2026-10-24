@@ -182,44 +182,66 @@ pub fn electrical_tools(app: &mut CadApp, ui: &mut egui::Ui) {
     let width = ui.available_width().min(ui.clip_rect().width()).max(26.0);
     let columns = (((width + 6.0) / 32.0).floor() as usize).clamp(1, 13);
     let wrap = app.ui.docking.layout.contains(&crate::docking::Panel::ElectricalTools);
-    let draw = |ui: &mut egui::Ui| {
-        for (index, (icon, command, label, needs_doc)) in [
-            (Icon::KnownDistanceScale, "ui.elettrico.calibrate", "Scala da misura nota...", true),
-            (Icon::ElectricalCompose, "ui.elettrico.compose", "Componi scatola...", true),
-            (Icon::ElectricalEdit, "ui.elettrico.edit", "Modifica scatola...", true),
-            (Icon::ElectricalSymbol, "ui.elettrico.symbols", "Inserisci simbolo...", true),
-            (Icon::ElectricalCatalog, "ui.elettrico.manager", "Gestione catalogo simboli...", false),
-            (Icon::Area, "ui.elettrico.room", "Definisci ambiente...", true),
-            (Icon::List, "ui.elettrico.rooms", "Gestione ambienti...", true),
-            (Icon::Switcher, "ui.elettrico.project", "Fogli di progetto...", false),
-            (Icon::PageSetup, "ui.elettrico.unifilar.new", "Nuovo schema unifilare...", false),
-            (Icon::Blocks, "ui.elettrico.unifilar.symbols", "Inserisci apparecchio unifilare...", true),
-            (Icon::Line, "ui.elettrico.unifilar.link.series", "Collega simboli...", true),
-            (Icon::Move, "ui.elettrico.unifilar.circuit.move", "Sposta circuito...", true),
-            (Icon::Share, "ui.elettrico.project.reference", "Rimando tra fogli...", true),
-        ]
-        .into_iter()
-        .enumerate()
-        {
-            ui.add_enabled_ui(!busy && (!needs_doc || has_doc), |ui| {
-                if icons::button(ui, icon, 26.0, label, false).clicked() {
-                    clicked = Some(command);
-                }
-            });
-            if wrap && (index + 1) % columns == 0 {
-                ui.end_row();
-            }
+    let groups: &[(&str, &[(Icon, &str, &str, bool)])] = &[
+        (
+            "Planimetria",
+            &[
+                (Icon::KnownDistanceScale, "ui.elettrico.calibrate", "Scala da misura nota...", true),
+                (Icon::ElectricalCompose, "ui.elettrico.compose", "Componi scatola...", true),
+                (Icon::ElectricalEdit, "ui.elettrico.edit", "Modifica scatola...", true),
+                (Icon::ElectricalSymbol, "ui.elettrico.symbols", "Inserisci simbolo...", true),
+                (Icon::ElectricalCatalog, "ui.elettrico.manager", "Gestione catalogo simboli...", false),
+                (Icon::Area, "ui.elettrico.room", "Definisci ambiente...", true),
+                (Icon::List, "ui.elettrico.rooms", "Gestione ambienti...", true),
+            ],
+        ),
+        (
+            "Unifilare",
+            &[
+                (Icon::PageSetup, "ui.elettrico.unifilar.new", "Nuovo schema unifilare...", false),
+                (Icon::Blocks, "ui.elettrico.unifilar.symbols", "Inserisci apparecchio unifilare...", true),
+                (Icon::Line, "ui.elettrico.unifilar.link.series", "Collega simboli...", true),
+                (Icon::Move, "ui.elettrico.unifilar.circuit.move", "Sposta circuito...", true),
+            ],
+        ),
+        (
+            "Progetto",
+            &[
+                (Icon::Switcher, "ui.elettrico.project", "Fogli di progetto...", false),
+                (Icon::Share, "ui.elettrico.project.reference", "Rimando tra fogli...", true),
+            ],
+        ),
+    ];
+    for (group_index, (name, tools)) in groups.iter().enumerate() {
+        if group_index > 0 {
+            ui.separator();
         }
-    };
-    if wrap {
-        egui::Grid::new(ui.id().with("electrical.icon.grid"))
-            .num_columns(columns)
-            .min_col_width(26.0)
-            .max_col_width(26.0)
-            .spacing(egui::vec2(6.0, 6.0))
-            .show(ui, draw);
-    } else {
-        ui.horizontal(draw);
+        let mut draw = |ui: &mut egui::Ui| {
+            for (index, (icon, command, label, needs_doc)) in tools.iter().enumerate() {
+                ui.add_enabled_ui(!busy && (!needs_doc || has_doc), |ui| {
+                    if icons::button(ui, *icon, 26.0, label, false).clicked() {
+                        clicked = Some(*command);
+                    }
+                });
+                if wrap && (index + 1) % columns == 0 {
+                    ui.end_row();
+                }
+            }
+        };
+        if wrap {
+            ui.small(*name);
+            egui::Grid::new(ui.id().with(("electrical.icon.grid", name)))
+                .num_columns(columns)
+                .min_col_width(26.0)
+                .max_col_width(26.0)
+                .spacing(egui::vec2(6.0, 6.0))
+                .show(ui, draw);
+        } else {
+            ui.horizontal(|ui| {
+                ui.small(*name);
+                draw(ui);
+            });
+        }
     }
     if let Some(command) = clicked {
         app.start(command);

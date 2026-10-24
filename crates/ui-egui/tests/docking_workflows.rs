@@ -56,6 +56,9 @@ fn electrical_toolbar_floats_and_reference_wizard_changes_sheets_without_extra_w
     h.state_mut().run("ui.dock", json!({"operation":"float","panel":"electricalTools","rect":[200,120,340,220]})).unwrap();
     h.run_steps(3);
     assert!(h.state().ui.docking.layout.floating.iter().any(|g| g.panels.contains(&Panel::ElectricalTools)));
+    for name in ["Planimetria", "Unifilare", "Progetto"] {
+        assert!(h.get_by_label(name).rect().width() > 0.);
+    }
     let reference_button = h.get_by_label("Rimando tra fogli...").rect();
     assert!(
         reference_button.right() <= 540.0 && reference_button.bottom() <= 340.0,
@@ -67,7 +70,9 @@ fn electrical_toolbar_floats_and_reference_wizard_changes_sheets_without_extra_w
     assert!(restored.docking.layout.floating.iter().any(|g| g.panels.contains(&Panel::ElectricalTools)));
     h.state_mut().run("ui.elettrico.project.reference", Value::Null).unwrap();
     h.run_steps(3);
-    h.get_by_label("Inserisci partenza").click();
+    h.get_by_label("Ingresso").click();
+    h.run_steps(2);
+    h.get_by_label("Inserisci rimando").click();
     h.run_steps(3);
     assert_eq!(h.state().session.state().unwrap().uid, source_uid);
     h.state_mut().session.input(cadcraft_engine::Input::Point(cadcraft_engine::geom::Vec2::new(30., 100.))).unwrap();
@@ -76,7 +81,10 @@ fn electrical_toolbar_floats_and_reference_wizard_changes_sheets_without_extra_w
     assert!(h.state().session.running.is_some());
     h.state_mut().session.input(cadcraft_engine::Input::Point(cadcraft_engine::geom::Vec2::new(50., 100.))).unwrap();
     h.run_steps(3);
-    assert_eq!(cadcraft_engine::project::references::inspect(&h.state().session).unwrap()[0]["status"], "connected");
+    let references = cadcraft_engine::project::references::inspect(&h.state().session).unwrap();
+    assert_eq!(references[0]["status"], "connected");
+    assert_eq!(references[0]["ends"][0]["kind"], "input");
+    assert_eq!(references[0]["ends"][1]["kind"], "output");
     assert!(h.state_mut().request_quit());
     h.run_steps(3);
     h.get_by_label("Annulla").click();

@@ -299,7 +299,11 @@ use the active external catalog. Settings JSON uses scale,size_percent,units (mm
 
 ## Barra strumenti Elettrico
 
-La barra Elettrico, sotto il menu, richiama Componi scatola, Modifica scatola,
+La barra Elettrico è suddivisa nei gruppi Planimetria, Unifilare e Progetto.
+Nella palette mobile ogni gruppo ha un titolo e una griglia adattabile; nella
+barra orizzontale i gruppi sono affiancati e separati. La stessa definizione dei
+comandi alimenta entrambe le presentazioni per facilitare le estensioni future.
+La barra, sotto il menu, richiama Componi scatola, Modifica scatola,
 Inserisci simbolo e Gestione catalogo. Le icone originali usano la stessa griglia,
 palette del tema e interazione delle altre icone CADCraft. Il nome appare al
 passaggio del mouse. Durante un comando i pulsanti sono disabilitati; senza un

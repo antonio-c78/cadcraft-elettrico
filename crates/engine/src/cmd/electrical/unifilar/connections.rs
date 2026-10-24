@@ -296,7 +296,9 @@ impl Env {
                             if p.y >= layout.drawing_area[1] {
                                 env.boxes.push(Obstacle {
                                     owner: e.handle,
-                                    body: false,
+                                    // The reference label rotates/repositions after attaching the
+                                    // wire. Its own terminal leg may enter this provisional envelope.
+                                    body: crate::project::references::is_reference(e),
                                     rect: [
                                         p.x - routing::CLEARANCE,
                                         p.y - routing::CLEARANCE,
@@ -649,6 +651,7 @@ pub(super) fn refresh(d: &mut Drawing, layout: &schema::Layout) -> Result<()> {
     }
     dots::rebuild(d)?;
     super::markers::refresh(d, layout)?;
+    crate::project::references::orient(d)?;
     Ok(())
 }
 fn selected(s: &Session, p: &Value) -> Result<Handle> {

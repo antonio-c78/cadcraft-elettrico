@@ -135,17 +135,61 @@ fn project_references_are_real_wire_terminals_and_embedded_catalog_survives_miss
     let end = f.s.execute("electrical.project.reference.insert", &json!({"at":[27.5,282.5]})).unwrap();
     let wire = f.link(json!({"version":3,"kind":"wire","from":{"handle":end["handle"],"port":"in"},"to":f.port(0,"in"),"y":285.}));
     assert_eq!(f.path(&wire["handle"]).first().copied(), Some([27.5, 282.5]));
+    let arrow_head = |s: &Session| {
+        let e = s.doc().unwrap().entity(Handle::parse_hex(end["handle"].as_str().unwrap()).unwrap()).unwrap();
+        let EntityKind::Insert(i) = &e.kind else { panic!() };
+        s.doc()
+            .unwrap()
+            .block(&i.block)
+            .unwrap()
+            .entities
+            .iter()
+            .filter_map(|e| if let EntityKind::Line(l) = &e.kind { Some(l.b) } else { None })
+            .last()
+            .unwrap()
+    };
+    let head = arrow_head(&f.s);
+    assert!(head.y > 0. && head.x.abs() < 1e-6, "an output above its wire must point upward");
     let file = f.root.join("project.cce");
     f.s.execute("electrical.project.save", &json!({"path":file})).unwrap();
     std::fs::rename(&f.model, f.root.join("original-renamed.json")).unwrap();
     let mut other = Session::empty();
     other.execute("open", &json!({"path":file})).unwrap();
+    assert_eq!(arrow_head(&other), head);
+    assert_eq!(other.execute("electrical.project.list", &json!({})).unwrap()["references"][0]["ends"][0]["kind"], "output");
+    assert!(!cadcraft_engine::project::dirty(&other), "reading derived reference graphics must not mark the reopened project dirty");
     let cat = other.execute("electrical.unifilar.catalog", &json!({"model":"missing-model.json"})).unwrap();
     assert!(!cat["symbols"].as_array().unwrap().is_empty());
     other
         .execute("electrical.unifilar.prepare", &json!({"model":"missing-model.json","id":"dev","fields":{"sigla":"Q9"},"backup_dir":f.root}))
         .unwrap();
     assert!(other.execute("electrical.unifilar.link.read", &json!({"handle":wire["handle"]})).is_ok());
+}
+
+#[test]
+fn reference_provisional_graphics_never_block_its_own_wire_from_any_direction() {
+    for (at, port, mode) in [
+        ([27.5, 282.5], "in", "orthogonal"),
+        ([27.5, 235.], "out", "orthogonal"),
+        ([15., 275.], "in", "orthogonal"),
+        ([40., 275.], "in", "orthogonal"),
+        ([15., 250.], "out", "free"),
+    ] {
+        for kind in ["input", "output"] {
+            for reverse in [false, true] {
+                let mut f = fixture();
+                f.s.execute("electrical.project.new", &json!({"name":"Test"})).unwrap();
+                f.s.execute("electrical.project.add", &json!({})).unwrap();
+                let end = f.s.execute("electrical.project.reference.insert", &json!({"at":at,"kind":kind})).unwrap();
+                let reference = json!({"handle":end["handle"],"port":"in"});
+                let device = f.port(0, port);
+                let (from, to) = if reverse { (reference, device) } else { (device, reference) };
+                let wire = f.link(json!({"version":3,"kind":"wire","from":from,"to":to,"y":260.,"route_mode":mode}));
+                let path = f.path(&wire["handle"]);
+                assert!(path.first() == Some(&at) || path.last() == Some(&at), "{at:?} {kind} reverse={reverse}");
+            }
+        }
+    }
 }
 #[test]
 fn symbol_axis_is_always_the_column_center_even_with_legacy_offsets() {
