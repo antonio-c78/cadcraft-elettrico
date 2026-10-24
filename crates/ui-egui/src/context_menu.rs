@@ -292,8 +292,14 @@ pub fn show(app: &mut CadApp, resp: &egui::Response) {
     let mut clicked = None;
     let snap = app.canvas.snap_menu;
     resp.context_menu(|ui| {
-        let groups = if snap { snap_entries(app) } else { entries(app) };
-        groups_ui(ui, &groups, &mut clicked);
+        if !snap && let Some(groups) = crate::elettrico::context::menu::groups(app) {
+            crate::elettrico::context::menu::show(ui, &groups, &mut clicked);
+            ui.separator();
+            ui.menu_button(crate::i18n::t("More CAD commands..."), |ui| groups_ui(ui, &entries(app), &mut clicked));
+        } else {
+            let groups = if snap { snap_entries(app) } else { entries(app) };
+            groups_ui(ui, &groups, &mut clicked);
+        }
     });
     match clicked {
         Some(id) if snap => choose_snap(app, &id),

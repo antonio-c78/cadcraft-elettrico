@@ -380,3 +380,20 @@ drawing, not in the external symbol catalog. Native commands are:
   selection when handles are omitted; null returns to automatic membership.
 - `electrical.room.delete {handle,backup_dir?}` deletes only that reference. Existing
   overrides to a deleted room are flagged until reassigned.
+
+## Focused electrical shortcut menu
+
+Right-clicking a selection made entirely of native electrical objects opens a compact
+menu with directly accessible actions and noninteractive category headings. Empty
+categories are omitted. The stable order is Edit, Move and copy, Connections,
+Rooms and assignments, Delete, Information. Ordinary and mixed CAD selections retain
+the standard shortcut menu, as do the block editor, paper space and snap menus.
+The complete original menu remains under More CAD commands, including its separators
+and command availability rules.
+
+`elettrico/context.rs` resolves applicable electrical actions; `context/menu.rs` owns
+category order and the small set of common commands; `context_menu.rs` hosts the popup.
+New actions reuse the existing dispatcher and default to Edit until categorized.
+No drawing edits happen during menu construction. Unifilar selections promote the
+native circuit move and connection commands instead of generic transforms that bypass
+table data and route dependencies. Room deletion uses its native confirmation flow.

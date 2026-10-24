@@ -3,6 +3,7 @@ use super::{edit, rooms, symbol};
 use crate::{CadApp, menus::Entry};
 use cadcraft_engine::doc::{EntityKind, Handle, Space};
 use serde_json::{Value, json};
+pub(crate) mod menu;
 
 #[derive(Clone, Copy, PartialEq, Debug)]
 enum Kind {
