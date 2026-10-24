@@ -30,8 +30,8 @@ pub(super) fn show(app: &mut CadApp, ctx: &egui::Context) {
         .default_width(380.)
         .show(ctx, |ui| {
             ui.heading(&d.summary);
-            ui.label("Sposta il cursore su una colonna libera e controlla l’anteprima.");
-            ui.label("Clicca per confermare. L’altezza dei dispositivi rimane invariata.");
+            ui.label("Scegli la destinazione della prima colonna selezionata e controlla l’anteprima.");
+            ui.label("Il gruppo mantiene distanze e altezze. Clicca per confermare.");
             ui.label("Seguono testi, dati e fili, compreso il collegamento a monte. Le altre colonne restano ferme.");
             if let Some(error) = &d.error {
                 ui.colored_label(ui.visuals().error_fg_color, error);

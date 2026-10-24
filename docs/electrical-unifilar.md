@@ -118,13 +118,12 @@ Explicit native editing upgrades a non-bus legacy route to v3; Undo restores it.
 Distribution bars retain their existing two-endpoint guide and legacy automatic router.
 
 Bounds remain 128 devices, 256 links, 32 fixed anchors per link, 128 route vertices,
-8192 wire segments and 2048 obstacle rectangles. Inter-sheet references, automated
-whole-circuit moves, automatic obstacle rerouting for hand-traced paths, automatic
+8192 wire segments and 2048 obstacle rectangles. Inter-sheet references, automatic
 merging of overlapping wires, and electrical calculations remain separate features.
 
 ## Category data and shared columns
 
-The external symbol contract may set `data_position` to `table` (legacy default), `right`, or `below`. Multiple devices can share a column when their graphics and local annotations fit; there is no three-device limit. Insertion, preview and explicit device edits always use the exact column center. A legacy `axis_offset_mm` remains readable but does not move symbols, and previously offset objects cannot propagate their axis to new insertions. Existing drawings are not moved on opening; explicitly editing an older offset symbol recenters it and refreshes its connections under the usual backup/Undo. Table text remains centered in its original cells. Whole-circuit movement and further connection interaction are separate work.
+The external symbol contract may set `data_position` to `table` (legacy default), `right`, or `below`. Multiple devices can share a column when their graphics and local annotations fit; there is no three-device limit. Insertion, preview and explicit device edits always use the exact column center. A legacy `axis_offset_mm` remains readable but does not move symbols, and previously offset objects cannot propagate their axis to new insertions. Existing drawings are not moved on opening; explicitly editing an older offset symbol recenters it and refreshes its connections under the usual backup/Undo. Table text remains centered in its original cells. Whole-circuit movement uses the column-group command below.
 
 The agreed category policies are: Comando excludes cable type, formation and length and places its remaining data on the right; Misura and Utilizzatori expose only sigla, descrizione and optional modello/codice, below their terminal symbols and above PE; Linee e conduttori expose cavo, formazione and lunghezza in their column's table cells. Alimentazione is a separate category with its previous fields pending review. Those category choices live outside the repository with the private symbol catalog, not as hard-coded category names in the engine.
 
@@ -158,3 +157,30 @@ its horizontal-level/midpoint passage options, automatic detours and old fixed-p
 form. Native explicit editing upgrades non-bus objects to the v3 point tracer above.
 The directed electrical checks in this legacy input format are compatibility behavior,
 not the policy of the new native drawing command.
+
+
+## Moving selected circuit columns
+
+One `Sposta circuito` command derives its scope from the preselection: one apparatus
+selects its whole column; apparatuses in several columns select all those columns.
+Window selections may also include wires and other drawing objects; those do not
+expand the column scope. No undirected network traversal pulls in the shared supply.
+Choose the destination of the leftmost selected column. Other selected columns keep
+their relative spacing, device heights, local annotations and table fields. Nonadjacent
+columns are supported. Occupied source columns are reusable within the moving group;
+foreign occupants, incompatible layouts and off-sheet destinations reject the whole move.
+
+The engine command `electrical.unifilar.circuit.move` accepts `{model, handles?,
+handle?, column, backup_dir?}`; without explicit handles it uses the current selection.
+`prepare` highlights the expanded scope and `place` shows all destination column edges
+and a cached geometry preview. Escape restores the preselection. Backup and one Undo
+cover the entire commit. Internal wires translate, external wires retain their foreign
+terminals and reroute as needed; shared bars remain fixed.
+
+The modules separate responsibilities: `circuits/scope.rs` resolves the selection and
+column mapping; `circuits.rs` owns staging, preview and atomic commit;
+`connections/relocate.rs` maintains route dependencies, taps, markers and junctions.
+Future selection policies can reuse relocation without rewriting the wire engine.
+Apparatus picking uses actual rendered strokes rather than the huge bounding box
+between a symbol and its table data, and takes precedence over an overlapping native
+wire within the normal pick aperture. Wires elsewhere remain independently selectable.

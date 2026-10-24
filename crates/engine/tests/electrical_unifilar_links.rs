@@ -1140,19 +1140,30 @@ fn line_data_marker_moves_to_the_new_column_on_a_fixed_shared_bar() {
 }
 
 #[test]
-fn moving_a_circuit_reroutes_the_upstream_feed_away_from_a_foreign_net() {
+fn moving_a_circuit_keeps_the_upstream_feed_separate_from_a_foreign_net() {
     let mut f = fixture();
     f.s.doc_mut().unwrap().remove_entity(Handle::parse_hex(&f.devices[3]).unwrap());
     let cmd =
         f.s.execute("electrical.unifilar.insert", &json!({"model":f.model,"id":"dev","at":[62.5,210.],"fields":{},"backup_dir":f.root})).unwrap();
     let upstream = f.link(wire(&f, f.port(0, "out"), f.port(1, "in"), json!([[10., 263.], [10., 280.], [62.5, 280.]])));
     let internal = f.link(wire(&f, f.port(1, "out"), json!({"handle":cmd["handle"],"port":"in"}), json!([])));
-    f.link(json!({"version":3,"kind":"wire","tap":{"wire":internal["handle"],"part":"route","fraction":0.4},"to":f.port(2,"in"),"y":226.8,"waypoints":[[80.,226.8],[80.,280.],[97.5,280.]],"route_mode":"orthogonal"}));
+    let branch = f.link(json!({"version":3,"kind":"wire","tap":{"wire":internal["handle"],"part":"route","fraction":0.4},"to":f.port(2,"in"),"y":226.8,"waypoints":[[80.,226.8],[80.,280.],[97.5,280.]],"route_mode":"orthogonal"}));
     f.s.execute("electrical.unifilar.circuit.move", &json!({"model":f.model,"handle":f.devices[1],"column":4,"backup_dir":f.root})).unwrap();
     let path = f.path(&upstream["handle"]);
     assert_eq!(path.first().unwrap(), &[27.5, 263.]);
     assert_eq!(path.last().unwrap(), &[132.5, 250.]);
-    assert!(!path.windows(2).any(|s| s[0][1] == 280. && s[1][1] == 280. && s[0][0].min(s[1][0]) < 97.5 && s[0][0].max(s[1][0]) > 80.));
+    let branch = f.path(&branch["handle"]);
+    // Either affected route may be rerouted; validate the final pair, not old bends.
+    assert!(!path.windows(2).any(|a| branch.windows(2).any(|b| {
+        (0..2).any(|axis| {
+            let along = 1 - axis;
+            (a[0][axis] - a[1][axis]).abs() < 1e-7
+                && (b[0][axis] - b[1][axis]).abs() < 1e-7
+                && (a[0][axis] - b[0][axis]).abs() < 1e-7
+                && a[0][along].max(a[1][along]).min(b[0][along].max(b[1][along])) - a[0][along].min(a[1][along]).max(b[0][along].min(b[1][along]))
+                    > 1e-7
+        })
+    })));
 }
 
 #[test]
@@ -1175,4 +1186,81 @@ fn a_moved_circuit_retains_orthogonal_wires_when_one_device_is_edited_later() {
         path.windows(2).all(|s| (s[0][0] - s[1][0]).abs() < 1e-7 || (s[0][1] - s[1][1]).abs() < 1e-7),
         "Moving a circuit must not turn orthogonal wires into free-angle wires: {path:?}"
     );
+}
+
+#[test]
+fn multiple_columns_shift_together_into_their_own_vacated_columns() {
+    let mut f = fixture();
+    let last = Handle::parse_hex(&f.devices[3]).unwrap();
+    f.s.doc_mut().unwrap().remove_entity(last).unwrap();
+    let a = f.link(json!({"version":3,"kind":"wire","y":200.,"route_mode":"orthogonal","from":f.port(0,"out"),"to":f.port(1,"in"),"waypoints":[[27.5,260.],[62.5,260.]]}));
+    let b = f.link(json!({"version":3,"kind":"wire","y":200.,"route_mode":"orthogonal","from":f.port(1,"out"),"to":f.port(2,"in"),"waypoints":[[62.5,230.],[80.,230.],[80.,260.],[97.5,260.]]}));
+    let marker =
+        f.s.execute("electrical.unifilar.insert", &json!({"model":f.model,"id":"mark","at":[80.,245.],"fields":{},"backup_dir":f.root})).unwrap();
+    let baseline = f.s.doc().unwrap().clone();
+    f.s.set_selection(vec![
+        Handle::parse_hex(&f.devices[1]).unwrap(),
+        Handle::parse_hex(&f.devices[2]).unwrap(),
+        Handle::parse_hex(a["handle"].as_str().unwrap()).unwrap(),
+        Handle::parse_hex(marker["handle"].as_str().unwrap()).unwrap(),
+    ]);
+    f.s.execute("electrical.unifilar.circuit.move", &json!({"model":f.model,"column":3,"backup_dir":f.root})).unwrap();
+    for (i, x) in [(0, 27.5), (1, 97.5), (2, 132.5)] {
+        let e = f.s.doc().unwrap().entity(Handle::parse_hex(&f.devices[i]).unwrap()).unwrap();
+        let EntityKind::Insert(insert) = &e.kind else { panic!() };
+        assert_eq!(insert.insert.x, x);
+    }
+    assert!(!f.path(&b["handle"]).is_empty());
+    f.s.undo().unwrap();
+    assert_eq!(f.s.doc().unwrap().model, baseline.model);
+}
+
+#[test]
+fn group_move_rejects_outside_and_foreign_columns_atomically() {
+    let mut f = fixture();
+    for column in [1, 3, 4] {
+        let baseline = f.s.state().unwrap().doc.clone();
+        assert!(
+            f.s.execute(
+                "electrical.unifilar.circuit.move",
+                &json!({"model":f.model,"handles":[f.devices[1],f.devices[2]],"column":column,"backup_dir":f.root})
+            )
+            .is_err()
+        );
+        assert!(Arc::ptr_eq(&baseline, &f.s.state().unwrap().doc));
+    }
+}
+
+#[test]
+fn electrical_apparatus_is_picked_over_a_wire_at_its_artwork_only() {
+    let mut f = fixture();
+    let wire = f.link(json!({"version":3,"kind":"wire","y":200.,"route_mode":"orthogonal","from":f.port(0,"out"),"to":f.port(1,"in"),"waypoints":[[27.5,255.],[62.5,255.]]}));
+    let h = Handle::parse_hex(&f.devices[1]).unwrap();
+    let line = Handle::parse_hex(wire["handle"].as_str().unwrap()).unwrap();
+    let d = f.s.doc().unwrap();
+    assert_eq!(cadcraft_engine::select::pick(d, &cadcraft_engine::doc::Space::Model, cadcraft_engine::geom::Vec2::new(62.5, 249.), 1.1), Some(h));
+    assert_eq!(cadcraft_engine::select::pick(d, &cadcraft_engine::doc::Space::Model, cadcraft_engine::geom::Vec2::new(45., 255.), 0.5), Some(line));
+}
+
+#[test]
+fn four_circuits_can_shift_one_column_and_back_as_one_operation() {
+    let mut f = fixture();
+    let mut model: Value = serde_json::from_str(&std::fs::read_to_string(&f.model).unwrap()).unwrap();
+    let mut fifth = model["columns"][3].clone();
+    fifth["index"] = json!(5);
+    fifth["axis_x"] = json!(167.5);
+    fifth["bounds"] = json!([150., 30., 185., 287.]);
+    fifth["cells"]["sigla"]["bounds"] = json!([150., 146., 185., 153.]);
+    fifth["cells"]["sigla"]["text_center"] = json!([167.5, 149.5]);
+    model["columns"].as_array_mut().unwrap().push(fifth);
+    model["drawing_area"][2] = json!(220.);
+    model["pe"]["x_range"][1] = json!(210.);
+    std::fs::write(&f.model, model.to_string()).unwrap();
+    for column in [2, 1] {
+        f.s.execute("electrical.unifilar.circuit.move", &json!({"model":f.model,"handles":f.devices,"column":column,"backup_dir":f.root})).unwrap();
+        for (i, h) in f.devices.iter().enumerate() {
+            let read = f.s.execute("electrical.unifilar.read", &json!({"handle":h})).unwrap();
+            assert_eq!(read["column"], json!(i + column));
+        }
+    }
 }

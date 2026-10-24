@@ -86,6 +86,12 @@ fn dist_to_polyline(pts: &[Vec2], p: Vec2) -> f64 {
 
 /// Distance from `p` to the entity (0 inside text boxes and solid fills).
 pub fn entity_distance(d: &Drawing, e: &Entity, p: Vec2, tol: f64) -> f64 {
+    // Native electrical inserts also own distant table text. Pick actual strokes,
+    // never the enormous rectangle spanning the symbol and its table cells.
+    if electrical_device(e) {
+        let list = cadcraft_render::build_entities(d, std::iter::once(e), &cadcraft_render::Options { tolerance: tol, ..Default::default() });
+        return list.prims.iter().map(|prim| dist_to_polyline(list.points(prim), p)).fold(f64::INFINITY, f64::min);
+    }
     let polys = hit_polylines(d, e, tol);
     let mut best = polys.iter().map(|pl| dist_to_polyline(pl, p)).fold(f64::INFINITY, f64::min);
     let filled = matches!(e.kind, EntityKind::Text(_) | EntityKind::MText(_) | EntityKind::AttDef(_) | EntityKind::Table(_))
@@ -181,6 +187,13 @@ pub(crate) fn candidates<'a>(
     }
 }
 
+fn electrical_device(e: &Entity) -> bool {
+    matches!(e.kind, EntityKind::Insert(_)) && e.common.xdata.iter().any(|t| t.code == 1001 && t.value == "CC_UNIFILARE_DEVICE")
+}
+fn electrical_wire(e: &Entity) -> bool {
+    e.common.xdata.iter().any(|t| t.code == 1001 && t.value == "CC_UNIFILARE_LINK")
+}
+
 /// The topmost entity within `aperture` of `p`.
 pub fn pick(d: &Drawing, space: &Space, p: Vec2, aperture: f64) -> Option<Handle> {
     let ix = spatial::index(d, space);
@@ -190,6 +203,7 @@ pub fn pick(d: &Drawing, space: &Space, p: Vec2, aperture: f64) -> Option<Handle
 pub(crate) fn pick_with(d: &Drawing, space: &Space, ix: &Option<std::sync::Arc<SpatialIndex>>, p: Vec2, aperture: f64) -> Option<Handle> {
     let probe = Bounds2::new(p, p).expand(aperture);
     let mut best: Option<(f64, Handle)> = None;
+    let mut device: Option<(f64, Handle)> = None;
     for (e, known) in candidates(d, space, ix, &probe.expand(aperture), true, true)? {
         if !selectable(d, e) {
             continue;
@@ -199,12 +213,23 @@ pub(crate) fn pick_with(d: &Drawing, space: &Space, ix: &Option<std::sync::Arc<S
             continue;
         }
         let dist = entity_distance(d, e, p, aperture / 4.0);
+        if electrical_device(e) && dist <= aperture && device.is_none_or(|(bd, _)| dist < bd) {
+            device = Some((dist, e.handle));
+        }
         if dist <= aperture && best.is_none_or(|(bd, _)| dist < bd - 1e-12) {
             best = Some((dist, e.handle));
-            if dist == 0.0 {
+            if dist == 0.0 && !electrical_wire(e) {
                 break;
             }
         }
+    }
+    // Wires are often drawn later and overlap the apparatus connection strokes.
+    // Prefer an apparatus only near its actual artwork, leaving wires outside it selectable.
+    if let Some((_, h)) = best
+        && d.entity(h).is_some_and(|e| electrical_wire(e))
+        && let Some((_, native)) = device
+    {
+        return Some(native);
     }
     best.map(|(_, h)| h)
 }

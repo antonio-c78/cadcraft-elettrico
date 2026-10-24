@@ -4,6 +4,7 @@ use super::{connections, placement, schema};
 use crate::EngineError;
 use cadcraft_doc::{Drawing, Handle};
 use std::collections::BTreeSet;
+mod scope;
 use std::sync::Mutex;
 const CMD: &str = "electrical.unifilar.circuit.move";
 const APP: &str = "CC_UNIFILARE_DEVICE";
@@ -15,6 +16,7 @@ pub struct Draft {
     layout: schema::Layout,
     handles: BTreeSet<Handle>,
     source: usize,
+    columns: BTreeSet<usize>,
     selection: Vec<Handle>,
     backup_dir: Option<String>,
     cache: Cached,
@@ -33,22 +35,13 @@ fn message(e: EngineError) -> String {
 fn build(s: &Session, p: &Value) -> Result<Draft> {
     let (fallback, _, _) = schema::load(p["model"].as_str().ok_or_else(|| error("Indica il modello della tavola."))?)?;
     let layout = placement::sheet(s, &fallback)?;
-    let selected = p["handle"]
-        .as_str()
-        .and_then(Handle::parse_hex)
-        .or_else(|| {
-            let selection = s.selection();
-            selection.first().copied().filter(|_| selection.len() == 1)
-        })
-        .ok_or_else(|| error("Seleziona un apparecchio del circuito da spostare."))?;
-    let entity = s.doc()?.entity(selected).ok_or_else(|| error("Apparecchio assente."))?;
-    let meta = placement::data(entity, APP)?.filter(|m| m["kind"] == "device").ok_or_else(|| error("Seleziona un apparecchio unifilare."))?;
-    let source = meta["column"].as_u64().and_then(|v| usize::try_from(v).ok()).ok_or_else(|| error("Colonna dell'apparecchio non valida."))?;
+    let columns = scope::selected_columns(s, p)?;
+    let source = columns.first().copied().ok_or_else(|| error("Seleziona un apparecchio unifilare."))?;
     let mut handles = BTreeSet::new();
     let mut count = 0;
     for e in s.doc()?.model.iter() {
         if let Some(m) = placement::data(e, APP)?
-            && m["column"].as_u64() == Some(source as u64)
+            && m["column"].as_u64().and_then(|v| usize::try_from(v).ok()).is_some_and(|c| columns.contains(&c))
         {
             handles.insert(e.handle);
             if m["kind"] == "device" {
@@ -65,10 +58,11 @@ fn build(s: &Session, p: &Value) -> Result<Draft> {
         layout,
         handles,
         source,
+        columns: columns.clone(),
         selection: s.selection(),
         backup_dir: p["backup_dir"].as_str().map(str::to_owned),
         cache: Arc::new(Mutex::new(None)),
-        summary: format!("Colonna {source} · {count} apparecchi"),
+        summary: format!("Colonne {} · {count} apparecchi", columns.iter().map(usize::to_string).collect::<Vec<_>>().join(", ")),
         error: None,
     })
 }
@@ -88,24 +82,14 @@ fn transformed(d: &Draft, target: usize) -> Result<Arc<Drawing>> {
     if target == d.source {
         return Err(error("Scegli una colonna diversa da quella di partenza."));
     }
-    let source = d.layout.columns.iter().find(|c| c.index == d.source).ok_or_else(|| error("Colonna di partenza assente."))?;
-    let dest = d.layout.columns.iter().find(|c| c.index == target).ok_or_else(|| error("Colonna di destinazione assente."))?;
-    let dx = dest.axis_x - source.axis_x;
-    if (dest.bounds[2] - dest.bounds[0] - (source.bounds[2] - source.bounds[0])).abs() > 1e-6
-        || source.cells.iter().any(|(k, v)| {
-            dest.cells
-                .get(k)
-                .is_none_or(|w| (w.text_center[0] - v.text_center[0] - dx).abs() > 1e-6 || (w.text_center[1] - v.text_center[1]).abs() > 1e-6)
-        })
-    {
-        return Err(error("Le due colonne hanno formati diversi."));
-    }
+    let mapping = scope::destinations(&d.layout, &d.columns, d.source, target)?;
+    let (_, dx) = mapping.get(&d.source).copied().ok_or_else(|| error("Colonna assente."))?;
     for e in d.baseline.model.iter() {
         if !d.handles.contains(&e.handle)
             && let Some(m) = placement::data(e, APP)?
-            && m["column"].as_u64() == Some(target as u64)
+            && m["column"].as_u64().and_then(|v| usize::try_from(v).ok()).is_some_and(|c| mapping.values().any(|(dest, _)| *dest == c))
         {
-            return Err(error("La colonna di destinazione contiene già apparecchi o dati. Scegli una colonna libera."));
+            return Err(error("Una colonna di destinazione contiene apparecchi o dati estranei alla selezione."));
         }
     }
     let mut drawing = (*d.baseline).clone();
@@ -128,7 +112,9 @@ fn transformed(d: &Draft, target: usize) -> Result<Arc<Drawing>> {
             return Err(error("Annulla la trasformazione generica dell'apparecchio."));
         }
         meta["at"] = json!([at[0] + dx, at[1]]);
-        meta["column"] = json!(target);
+        let old_column = meta["column"].as_u64().and_then(|v| usize::try_from(v).ok()).ok_or_else(|| error("Colonna non valida."))?;
+        let (new_column, _) = mapping.get(&old_column).ok_or_else(|| error("Colonna fuori dal gruppo."))?;
+        meta["column"] = json!(new_column);
         drawing.modify_entity(*h, |e| {
             if let EntityKind::Insert(i) = &mut e.kind {
                 i.insert.x += dx;
@@ -158,7 +144,7 @@ fn commit(s: &mut Session, d: &Draft, target: usize) -> Result<Value> {
     let saved = backup(s.doc()?, d.backup_dir.as_deref())?;
     *s.doc_mut()? = (*drawing).clone();
     s.unifilar_circuit = None;
-    Ok(json!({"source":d.source,"column":target,"devices":d.handles.iter().map(|h|h.hex()).collect::<Vec<_>>(),"backup":saved}))
+    Ok(json!({"source":d.source,"columns":d.columns,"column":target,"devices":d.handles.iter().map(|h|h.hex()).collect::<Vec<_>>(),"backup":saved}))
 }
 fn prepare(s: &mut Session, p: &Value) -> Result<Value> {
     if s.running.is_some() {
@@ -180,7 +166,7 @@ fn run(s: &mut Session, p: &Value) -> Result<Value> {
 }
 pub(super) fn specs() -> Vec<CommandSpec> {
     vec![
-        CommandSpec::new(CMD, "Move electrical circuit", run).params("{model,handle?,column,backup_dir?}"),
+        CommandSpec::new(CMD, "Move electrical circuit", run).params("{model,handle?|handles?,column,backup_dir?}"),
         CommandSpec::new("electrical.unifilar.circuit.prepare", "Prepare circuit move", prepare).noundo(),
         CommandSpec::new("electrical.unifilar.circuit.place", "Place electrical circuit", |_, _| {
             Err(error("Avvia Sposta circuito dal menu Elettrico."))
@@ -208,7 +194,10 @@ impl Interactive for Place {
     }
     fn prompt(&self, s: &Session) -> Prompt {
         Prompt::new(
-            s.unifilar_circuit.as_ref().and_then(|d| d.error.as_deref()).unwrap_or("Scegli la colonna libera di destinazione; Esc annulla"),
+            s.unifilar_circuit
+                .as_ref()
+                .and_then(|d| d.error.as_deref())
+                .unwrap_or("Scegli la destinazione della prima colonna selezionata; Esc annulla"),
             Accept::POINT,
         )
     }
@@ -248,11 +237,14 @@ impl Interactive for Place {
             return vec![];
         }
         let Ok(target) = column(d, p.x) else { return vec![] };
-        let Some(col) = d.layout.columns.iter().find(|c| c.index == target) else { return vec![] };
-        let mut out = vec![
-            line(Vec2::new(col.bounds[0], col.bounds[1]), Vec2::new(col.bounds[0], col.bounds[3])),
-            line(Vec2::new(col.bounds[2], col.bounds[1]), Vec2::new(col.bounds[2], col.bounds[3])),
-        ];
+        let mut out = Vec::new();
+        let Ok(mapping) = scope::destinations(&d.layout, &d.columns, d.source, target) else { return out };
+        for (destination, _) in mapping.values() {
+            if let Some(col) = d.layout.columns.iter().find(|c| c.index == *destination) {
+                out.push(line(Vec2::new(col.bounds[0], col.bounds[1]), Vec2::new(col.bounds[0], col.bounds[3])));
+                out.push(line(Vec2::new(col.bounds[2], col.bounds[1]), Vec2::new(col.bounds[2], col.bounds[3])));
+            }
+        }
         let Ok(draw) = candidate(d, target) else { return out };
         // Rendering expands inserts, including owned data and regenerated attached wires.
         let changed: Vec<_> = draw

@@ -124,7 +124,26 @@ fn foreign_overlap(env: &Env, l: &Link, path: &[Vec2]) -> Result<bool> {
     Ok(path.windows(2).any(|s| env.wires.iter().any(|(h, a, b)| env.roots.get(h) != Some(&root) && routing::overlaps_wire(s[0], s[1], *a, *b))))
 }
 
-/// Move only devices in the selected column. Shared bars and foreign terminals stay fixed.
+/// Retire old routes of the moving group before collision checks. Otherwise a wire
+/// still awaiting relocation falsely blocks the column another circuit is vacating.
+fn affected_routes(env: &Env, moved: &BTreeSet<Handle>) -> Result<BTreeSet<Handle>> {
+    let mut affected = BTreeSet::new();
+    for h in network::order(&env.links)? {
+        let l = env.links.get(&h).ok_or_else(|| err("Collegamento assente."))?;
+        let terminal_moves =
+            [l.from.as_ref(), l.to.as_ref()].into_iter().flatten().any(|p| Handle::parse_hex(&p.handle).is_some_and(|h| moved.contains(&h)));
+        let anchor_moves = [l.tap.as_ref(), l.end_tap.as_ref()]
+            .into_iter()
+            .flatten()
+            .any(|t| t.part == "route" && Handle::parse_hex(&t.wire).is_some_and(|h| affected.contains(&h)));
+        if terminal_moves || anchor_moves {
+            affected.insert(h);
+        }
+    }
+    Ok(affected)
+}
+
+/// Move selected column groups. Shared bars and foreign terminals stay fixed.
 pub(crate) fn relocate(
     before: &Drawing,
     drawing: &mut Drawing,
@@ -134,6 +153,8 @@ pub(crate) fn relocate(
 ) -> Result<BTreeSet<Handle>> {
     let old = Env::new(before, layout)?;
     let mut env = Env::new(drawing, layout)?;
+    let affected = affected_routes(&old, moved)?;
+    env.wires.retain(|(h, _, _)| !affected.contains(h));
     let mut changed = BTreeSet::new();
     let mut positions: BTreeMap<Handle, Vec<(Vec2, Vec2)>> = BTreeMap::new();
     let mut anchors: BTreeMap<Handle, Vec<Vec2>> = BTreeMap::new();
@@ -228,6 +249,9 @@ pub(crate) fn relocate(
         let affects =
             augmented.iter().zip(&desired).any(|(p, q)| !p.near(*q, 1e-7)) || serde_json::to_value(&l).map_err(|e| err(e.to_string()))? != upgraded;
         if !affects {
+            if affected.contains(&h) {
+                env.wires.extend(old.wires.iter().filter(|(owner, _, _)| *owner == h).copied());
+            }
             continue;
         }
         editable(drawing, h)?;

@@ -86,6 +86,21 @@ pub(crate) fn entries(app: &CadApp) -> Vec<Entry> {
             return vec![Entry::Sub { label: "Elettrico".into(), children }];
         }
     }
+    if picked.len() > 1
+        && app.session.doc().is_ok_and(|doc| {
+            picked.iter().any(|h| doc.entity(*h).is_some_and(|e| e.common.xdata.iter().any(|t| t.code == 1001 && t.value == "CC_UNIFILARE_DEVICE")))
+        })
+    {
+        return vec![Entry::Sub {
+            label: "Elettrico".into(),
+            children: vec![Entry::Item {
+                label: "Sposta circuito...".into(),
+                id: "ui.elettrico.unifilar.circuit.move".into(),
+                shortcut: None,
+                enabled: app.session.running.is_none(),
+            }],
+        }];
+    }
     let selected = selection(app);
     if selected.is_empty() || selected.len() != app.session.selection().len() {
         return vec![];
@@ -410,6 +425,15 @@ mod tests {
                 _ => None,
             })
             .collect()
+    }
+    #[test]
+    fn circuit_move_is_available_for_multiple_devices_and_window_selected_wires() {
+        let mut app = CadApp::new(Session::new(), crate::Services::default());
+        let a = add(&mut app, "CC_UNIFILARE_DEVICE");
+        let b = add(&mut app, "CC_UNIFILARE_DEVICE");
+        let wire = add(&mut app, "CC_UNIFILARE_LINK");
+        app.session.set_selection(vec![a, b, wire]);
+        assert!(ids(&app).contains(&"ui.elettrico.unifilar.circuit.move".into()));
     }
     #[test]
     fn menu_is_specific_to_native_objects_and_bulk_actions_are_shared() {
