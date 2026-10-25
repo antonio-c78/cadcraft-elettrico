@@ -208,11 +208,39 @@ impl Draft {
     fn trace_last(&self) -> Result<Vec2> {
         self.link.waypoints.last().map(|p| Vec2::new(p[0], p[1])).map(Ok).unwrap_or_else(|| self.env.start(&self.link))
     }
-    pub(super) fn trace_snap(&self, p: Vec2, tol: f64) -> Option<Vec2> {
+    pub(super) fn trace_snap(&self, p: Vec2, tol: f64, grid: Option<Vec2>) -> Option<Vec2> {
         if ![0, 9].contains(&self.phase) {
             return None;
         }
-        self.env.endpoint(&self.baseline, p, tol).map(|v| v.1)
+        let (end, at) = self.env.endpoint(&self.baseline, p, tol)?;
+        let Some(grid) = grid else { return Some(at) };
+        match end {
+            End::Port(_) => Some(at),
+            End::Pe(_) => {
+                let (y, span) = self.env.pe().ok()?;
+                Some(Vec2::new(grid.x.clamp(span[0], span[1]), y))
+            }
+            End::Tap(t) => {
+                // Quantize along the picked segment, preserving exact contact with the wire.
+                // Existing off-grid wires are never moved just to match a drafting lattice.
+                let path = self.env.tap_path(&t).ok()?;
+                path.windows(2)
+                    .filter_map(|s| {
+                        let v = s[1] - s[0];
+                        let n = v.dot(v);
+                        if n < 1e-12 {
+                            return None;
+                        }
+                        let near = s[0] + v * ((at - s[0]).dot(v) / n).clamp(0., 1.);
+                        if !near.near(at, 1e-6) {
+                            return None;
+                        }
+                        Some(s[0] + v * ((grid - s[0]).dot(v) / n).clamp(0., 1.))
+                    })
+                    .min_by(|a, b| a.dist(grid).total_cmp(&b.dist(grid)))
+                    .or(Some(at))
+            }
+        }
     }
     pub(super) fn trace_point(&mut self, p: Vec2) -> Result<()> {
         let picked = self.env.endpoint(&self.baseline, p, 1.5);
@@ -309,7 +337,7 @@ impl Draft {
                 g.push(EntityKind::Circle(cadcraft_doc::Circle { center: p.to3(0.), radius: 0.8 }));
             }
         }
-        let at = self.trace_snap(cursor, 1.5).unwrap_or(cursor);
+        let at = self.trace_snap(cursor, 1.5, None).unwrap_or(cursor);
         g.push(EntityKind::Circle(cadcraft_doc::Circle { center: at.to3(0.), radius: 1. }));
         if self.phase == 9
             && let Ok(last) = self.trace_last()

@@ -68,6 +68,14 @@ const SESSION_VARS: &[&str] = &[
 
 pub fn get(s: &Session, name: &str) -> Option<Value> {
     let n = name.trim().to_ascii_uppercase();
+    if let Some(g) = crate::cmd::electrical::unifilar::grid::active(s) {
+        let p = g.preferences;
+        match n.as_str() {
+            "SNAPBASE" => return serde_json::to_value(p.origin.to3(0.)).ok(),
+            "SNAPANG" => return Some(json!(p.angle)),
+            _ => {}
+        }
+    }
     let st = &s.settings;
     let v = match n.as_str() {
         "OSMODE" => json!(st.osmode),
@@ -93,7 +101,7 @@ pub fn get(s: &Session, name: &str) -> Option<Value> {
             let unit = if n == "SNAPUNIT" { settings.snapunit } else { settings.gridunit };
             json!([unit.x, unit.y])
         }
-        "GRIDMAJOR" => json!(st.gridmajor),
+        "GRIDMAJOR" => json!(s.drafting_settings().gridmajor),
         "DYNDIGRIP" => json!(st.dyndigrip),
         "DYNDIVIS" => json!(st.dyndivis),
         "DYNMODE" => json!(i32::from(st.dynmode)),
@@ -222,6 +230,25 @@ pub fn set(s: &mut Session, name: &str, v: &Value) -> Result<()> {
         return Err(EngineError::BadParams { cmd: "setvar".into(), msg: format!("{n} is read-only") });
     }
     let bad = || EngineError::BadParams { cmd: "setvar".into(), msg: format!("invalid value for {n}") };
+    if crate::cmd::electrical::unifilar::grid::active(s).is_some() {
+        use cadcraft_doc::HVal;
+        let native = match n.as_str() {
+            "GRIDMODE" | "SNAPMODE" => Some(HVal::Int(i64::from(as_bool(v).ok_or_else(bad)?))),
+            "SNAPUNIT" | "GRIDUNIT" => Some(HVal::Point(
+                as_pt(v)
+                    .filter(|p| p.is_finite() && if n == "GRIDUNIT" { p.x >= 0. && p.y >= 0. } else { p.x > 0. && p.y > 0. })
+                    .ok_or_else(bad)?
+                    .to3(0.),
+            )),
+            "SNAPBASE" => Some(HVal::Point(as_pt(v).filter(|p| p.is_finite()).ok_or_else(bad)?.to3(0.))),
+            "SNAPANG" => Some(HVal::Real(as_f64(v).ok_or_else(bad)?)),
+            "GRIDMAJOR" => Some(HVal::Int(as_f64(v).ok_or_else(bad)?.clamp(1., 100.) as i64)),
+            _ => None,
+        };
+        if let Some(value) = native {
+            return crate::cmd::electrical::unifilar::grid::set(s, &n, value);
+        }
+    }
     let st = &mut s.settings;
     match n.as_str() {
         "OSMODE" => st.osmode = v.as_u64().or_else(|| v.as_str().and_then(|s| s.trim().parse().ok())).ok_or_else(bad)? as u32 & 0x7fff,
@@ -245,26 +272,8 @@ pub fn set(s: &mut Session, name: &str, v: &Value) -> Result<()> {
         }
         "QNEWTEMPLATE" => crate::cmd::file::set_qnew_template(v.as_str().ok_or_else(bad)?),
         "POLARANG" => st.polarang = as_f64(v).filter(|a| *a > 0.0).ok_or_else(bad)?.to_radians(),
-        "GRIDMODE" => {
-            let visible = as_bool(v).ok_or_else(bad)?;
-            if let Ok(state) = s.state_mut()
-                && let Some(grid) = &mut state.unifilar_grid
-            {
-                grid.visible = visible;
-            } else {
-                s.settings.gridmode = visible;
-            }
-        }
-        "SNAPMODE" => {
-            let enabled = as_bool(v).ok_or_else(bad)?;
-            if let Ok(state) = s.state_mut()
-                && let Some(grid) = &mut state.unifilar_grid
-            {
-                grid.snap_enabled = enabled;
-            } else {
-                s.settings.snapmode = enabled;
-            }
-        }
+        "GRIDMODE" => st.gridmode = as_bool(v).ok_or_else(bad)?,
+        "SNAPMODE" => st.snapmode = as_bool(v).ok_or_else(bad)?,
         "SNAPSTYL" => st.isodraft = as_i(v).filter(|b| (0..=1).contains(b)).ok_or_else(bad)? == 1,
         "SNAPISOPAIR" => st.isoplane = as_i(v).and_then(crate::snap::iso::IsoPlane::from_index).ok_or_else(bad)?,
         "SNAPUNIT" | "GRIDUNIT" => {
@@ -272,17 +281,6 @@ pub fn set(s: &mut Session, name: &str, v: &Value) -> Result<()> {
                 .filter(|p| p.is_finite() && if n == "GRIDUNIT" { p.x >= 0.0 && p.y >= 0.0 } else { p.x > 0.0 && p.y > 0.0 })
                 .ok_or_else(bad)?;
             s.doc_mut()?.header.set(&n, cadcraft_doc::HVal::Point(unit.to3(0.0)));
-            if n == "GRIDUNIT"
-                && let Some(grid) = &mut s.state_mut()?.unifilar_grid
-            {
-                grid.spacing = unit;
-            }
-            if n == "SNAPUNIT" {
-                let major = f64::from(s.settings.gridmajor.max(1));
-                if let Some(grid) = &mut s.state_mut()?.unifilar_grid {
-                    grid.spacing.y = unit.y / major;
-                }
-            }
         }
         "GRIDMAJOR" => st.gridmajor = as_f64(v).ok_or_else(bad)?.clamp(1.0, 100.0) as u32,
         "DYNDIGRIP" => st.dyndigrip = as_i(v).filter(|i| (0..=31).contains(i)).and_then(|i| u32::try_from(i).ok()).ok_or_else(bad)?,
@@ -405,7 +403,7 @@ pub fn list(s: &Session) -> Value {
     }
     if let Ok(d) = s.doc() {
         for (k, v) in &d.header.vars {
-            if matches!(k.as_str(), "ANGBASE" | "SNAPUNIT" | "GRIDUNIT") {
+            if matches!(k.as_str(), "ANGBASE" | "SNAPUNIT" | "GRIDUNIT" | "SNAPBASE" | "SNAPANG" | "GRIDMAJOR" | "SNAPMODE" | "GRIDMODE") {
                 m.insert(k.clone(), get(s, k).unwrap_or(Value::Null));
             } else if !k.starts_with("CADCRAFT_") {
                 m.insert(k.clone(), serde_json::to_value(v).unwrap_or(Value::Null));

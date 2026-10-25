@@ -788,6 +788,7 @@ impl crate::Session {
         if !raw.is_finite() {
             return CursorSnap { point: raw, ..Default::default() };
         }
+        let grid_frame = self.drafting_grid_frame();
         let last = self.last_segment.filter(|(_, b)| q.base.is_some_and(|base| base.near(*b, 1e-9 * (1.0 + b.len())))).map(|(a, b)| a.angle_to(b));
         let cfg = TrackConfig::relative_to(&s, angbase, last);
         if let Some(point) = crate::cmd::electrical::unifilar::connections::snap_port(self, raw, q.aperture) {
@@ -810,21 +811,21 @@ impl crate::Session {
             return CursorSnap { point: h.point, snap: Some(h), track: None, wait };
         }
         // Isometric snap (SNAPSTYL 1): its lattice in place of the rectangular grid.
-        let (raw, s) = super::iso::grid_snap(&doc, s, raw);
+        let (raw, s) = super::iso::grid_snap(s, raw, grid_frame);
         let mut p = raw;
         if s.snapmode && !s.polarsnap {
-            if let Some(grid) = sheet_grid {
-                // Only Y is quantized. Exact object snaps above still take precedence.
-                p = super::grid_snap(p, Vec2::new(0.0, s.snapunit.y), grid.origin, 0.0);
+            if sheet_grid.is_some() {
+                p = super::grid_snap(p, s.snapunit, grid_frame.0, grid_frame.1);
             } else {
                 let (origin, angle) = super::grid_frame(&doc);
                 p = super::grid_snap(p, doc.header.snap_unit(), origin, angle);
             }
         }
-        // Hand-traced electrical legs retain exact tracking levels even with sheet Y snap.
+        // On a unifilar sheet, ordinary grid snap wins over off-grid tracking paths.
         let electrical_trace = self.running.as_ref().is_some_and(|r| r.id == "electrical.unifilar.link.place")
             && self.unifilar_link.as_ref().is_some_and(|d| d.tracing && d.phase == 9);
-        let tracking_point = if electrical_trace { raw } else { p };
+        let strict_grid = electrical_trace && sheet_grid.is_some() && s.snapmode && !s.polarsnap && !s.isodraft;
+        let tracking_point = if electrical_trace && !strict_grid { raw } else { p };
         if let Some(mut t) = self.tracking.track(&doc, &space, tracking_point, q.aperture, q.tol, &cfg, q.base) {
             // PolarSnap (SNAPTYPE 1): steps of POLARDIST, or of the snap X spacing when it is 0.
             let step = if s.polardist > 0.0 { s.polardist } else { s.snapunit.x };
@@ -835,13 +836,20 @@ impl crate::Session {
                 t = snapped;
                 self.tracking.last = Some(t.clone());
             }
+            if strict_grid && !super::grid_snap(t.point, s.snapunit, grid_frame.0, grid_frame.1).near(t.point, 1e-6) {
+                self.tracking.last = None;
+                return CursorSnap { point: p, snap: None, track: None, wait };
+            }
             return CursorSnap { point: t.point, snap: None, track: Some(t), wait };
         }
         if let Some(b) = q.base
             && s.orthomode
             && !q.corner
         {
-            p = super::iso::ortho(&self.settings, b, p);
+            p = super::iso::ortho(&self.drafting_settings(), b, p);
+        }
+        if strict_grid {
+            p = super::grid_snap(p, s.snapunit, grid_frame.0, grid_frame.1);
         }
         CursorSnap { point: p, snap: None, track: None, wait }
     }

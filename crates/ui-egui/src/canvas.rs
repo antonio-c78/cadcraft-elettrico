@@ -671,36 +671,35 @@ fn draw_grid(app: &CadApp, p: &egui::Painter, xf: &Xf) {
         let minor = adaptive(unit, xf.scale, 8.0);
         let unit_y = if s.gridunit.y == 0.0 { s.snapunit.y } else { s.gridunit.y };
         let minor_y = adaptive(unit_y, xf.scale, 8.0);
-        let sheet_grid = app
-            .session
-            .state()
-            .ok()
-            .filter(|st| st.block_edit.is_none() && app.session.space() == cadcraft_engine::doc::Space::Model)
-            .and_then(|st| st.unifilar_grid);
-        let origin = sheet_grid.map(|g| g.origin).unwrap_or(Vec2::ZERO);
+        let (origin, angle) = app.session.drafting_grid_frame();
+        let ux = Vec2::from_angle(angle);
+        let uy = Vec2::new(-ux.y, ux.x);
+        let local = cadcraft_engine::geom::Bounds2::from_points(
+            [wb.min, Vec2::new(wb.max.x, wb.min.y), wb.max, Vec2::new(wb.min.x, wb.max.y)]
+                .map(|p| Vec2::new((p - origin).dot(ux), (p - origin).dot(uy))),
+        );
         let mut lines = Vec::new();
-        let x0 = ((wb.min.x - origin.x) / minor).floor() as i64;
-        let x1 = ((wb.max.x - origin.x) / minor).ceil() as i64;
-        let y0 = ((wb.min.y - origin.y) / minor_y).floor() as i64;
-        let y1 = ((wb.max.y - origin.y) / minor_y).ceil() as i64;
-        if (x1 - x0) < 2000 && (y1 - y0) < 2000 {
+        let x0 = (local.min.x / minor).floor() as i64;
+        let x1 = (local.max.x / minor).ceil() as i64;
+        let y0 = (local.min.y / minor_y).floor() as i64;
+        let y1 = (local.max.y / minor_y).ceil() as i64;
+        if x1.checked_sub(x0).is_some_and(|n| n < 2000) && y1.checked_sub(y0).is_some_and(|n| n < 2000) {
             for i in x0..=x1 {
-                let x = origin.x + i as f64 * minor;
-                let is_major = i % major_n as i64 == 0;
-                let sx = xf.to_screen(Vec2::new(x, 0.0)).x;
+                let x = i as f64 * minor;
+                let column = x / (unit * major_n);
+                let is_major = (column - column.round()).abs() < 1e-6;
                 lines.push(Shape::line_segment(
-                    [pos2(sx, xf.rect.top()), pos2(sx, xf.rect.bottom())],
-                    Stroke::new(1.0, if is_major { t.grid_major } else { t.grid_minor }),
+                    [xf.to_screen(origin + ux * x + uy * local.min.y), xf.to_screen(origin + ux * x + uy * local.max.y)],
+                    Stroke::new(1., if is_major { t.grid_major } else { t.grid_minor }),
                 ));
             }
             for j in y0..=y1 {
-                let y = origin.y + j as f64 * minor_y;
-                let row = (y - origin.y) / (unit_y * major_n);
-                let is_major = if sheet_grid.is_some() { (row - row.round()).abs() < 1e-6 } else { j % major_n as i64 == 0 };
-                let sy = xf.to_screen(Vec2::new(0.0, y)).y;
+                let y = j as f64 * minor_y;
+                let row = y / (unit_y * major_n);
+                let is_major = (row - row.round()).abs() < 1e-6;
                 lines.push(Shape::line_segment(
-                    [pos2(xf.rect.left(), sy), pos2(xf.rect.right(), sy)],
-                    Stroke::new(1.0, if is_major { t.grid_major } else { t.grid_minor }),
+                    [xf.to_screen(origin + ux * local.min.x + uy * y), xf.to_screen(origin + ux * local.max.x + uy * y)],
+                    Stroke::new(1., if is_major { t.grid_major } else { t.grid_minor }),
                 ));
             }
         }
@@ -729,7 +728,7 @@ fn draw_iso_grid(app: &CadApp, p: &egui::Painter, xf: &Xf) {
         }
         d *= 5.0;
     }
-    let (origin, angle) = app.session.doc().map(cadcraft_engine::snap::grid_frame).unwrap_or((Vec2::ZERO, 0.0));
+    let (origin, angle) = app.session.drafting_grid_frame();
     let lines = iso::grid_lines(xf.world_bounds(), d, origin, angle, s.gridmajor);
     p.extend(
         lines.into_iter().map(|l| {

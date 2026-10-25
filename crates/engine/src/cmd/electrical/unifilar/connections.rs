@@ -964,7 +964,11 @@ pub fn snap_port(s: &Session, p: Vec2, tol: f64) -> Option<Vec2> {
     }
     let d = current(s).ok()?;
     if d.tracing {
-        return d.trace_snap(p, tol.max(1.));
+        let settings = s.drafting_settings();
+        let frame = s.drafting_grid_frame();
+        let grid =
+            (settings.snapmode && !settings.isodraft && !settings.polarsnap).then(|| crate::snap::grid_snap(p, settings.snapunit, frame.0, frame.1));
+        return d.trace_snap(p, tol.max(1.), grid);
     }
     let id = match (d.link.kind.as_str(), d.phase) {
         ("pe", 0) => "pe",

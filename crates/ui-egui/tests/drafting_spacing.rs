@@ -68,3 +68,36 @@ fn opening_the_dialog_preserves_loaded_spacing_outside_drag_ranges() {
     assert_eq!(header.point("GRIDUNIT"), Some(Vec3::new(1e8, 1e8, 0.0)));
     assert!(!h.state().session.state().unwrap().is_dirty(), "opening a dialog must not change the drawing");
 }
+
+#[test]
+fn unifilar_native_dialog_changes_both_axes_and_major_lines_without_changing_snap_spacing() {
+    use cadcraft_engine::doc::{Block, RawTag, Space};
+    let mut s = Session::empty();
+    let mut d = Drawing::new_metric();
+    d.blocks.insert("TITLE".into(), std::sync::Arc::new(Block::new("TITLE")));
+    s.open_drawing(d, "Setup", None);
+    let placed = s.execute("insert", &json!({"name":"TITLE","at":[0,0]})).unwrap();
+    let handle = cadcraft_engine::doc::Handle::parse_hex(placed["handle"].as_str().unwrap()).unwrap();
+    s.doc_mut()
+        .unwrap()
+        .modify_entity(handle, |e| {
+            e.common.xdata = vec![RawTag { code: 1001, value: "CC_UNIFILARE_MODELO".into() }, RawTag { code: 1000, value: "a3-10col-v1".into() }]
+        })
+        .unwrap();
+    assert_eq!(s.doc().unwrap().space_of(handle), Some(Space::Model));
+    let mut h = harness(s.doc().unwrap().clone(), false);
+    assert_eq!(h.state().session.drafting_settings().snapunit, cadcraft_engine::geom::Vec2::new(17.75, 12.5));
+    set_spacing(&mut h, 0, 9.);
+    set_spacing(&mut h, 1, 3.);
+    set_spacing(&mut h, 3, 2.);
+    set_spacing(&mut h, 4, 1.);
+    set_spacing(&mut h, 5, 7.);
+    h.run_steps(4);
+    let app = h.state();
+    let settings = app.session.drafting_settings();
+    assert_eq!(settings.snapunit, cadcraft_engine::geom::Vec2::new(9., 3.));
+    assert_eq!(settings.gridunit, cadcraft_engine::geom::Vec2::new(2., 1.));
+    assert_eq!(settings.gridmajor, 7);
+    assert_eq!(app.session.settings.gridmajor, 5);
+    assert!(app.session.state().unwrap().is_dirty());
+}

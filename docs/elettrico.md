@@ -507,3 +507,32 @@ This redraws their junction correctly without moving downstream connections.
 Ordinary crossings remain unconnected. Regression tests cover both drawing
 directions with a quarter-unit offset, forbidden inward/text crossings, folded
 trunk junctions, deletion and Undo. Opening a drawing alone does not rewrite it.
+
+
+## Native unifilar grid and snap overrides
+
+Recognized unifilar sheets start with half-column X spacing (17.75 mm in the A3
+model), 2.5 mm minor grid rows, major lines every five rows, and rectangular snap
+steps of 17.75 x 12.5 mm. Free electrical points now quantize on both axes. Exact
+apparatus ports retain priority, including legacy libraries with off-grid ports.
+Attachments to a horizontal/vertical conductor quantize along the picked segment
+while retaining exact contact with that conductor. Existing off-grid wires are
+not moved. With F9 off, the existing free/tracking behavior remains available.
+Off-grid polar/tracking guides cannot silently bypass rectangular grid snap while
+F9 is on in a recognized unifilar sheet; native PolarSnap/isometric modes remain
+user choices. Explicit typed/API coordinates retain normal native CAD semantics.
+
+There is no additional electrical snap toggle or settings dialog. F7/F9, SETVAR,
+GRIDUNIT, SNAPUNIT, GRIDMAJOR, SNAPBASE, SNAPANG and Drafting Settings share the same
+per-sheet preferences. Grid display uses the same origin and rotation as snapping.
+Snap spacing, visible grid spacing and major-line frequency are independent native
+settings. The original table basis remains immutable for circuit column numbering.
+The ordinary drawing/profile settings are not overwritten by opening a sheet.
+
+`unifilar/grid.rs` owns defaults, validated preferences and persistence in
+`CC_UNIFILARE_DRAFTING` version 1. Opening a legacy sheet is read-only. Explicit
+customizations are marked unsaved and synchronized to native DXF header variables
+and the sheet marker before saving, or after an interactive command ends. During
+an active command F9/settings changes do not replace its drawing snapshot, so the
+next wire point remains valid. Preferences survive DXF/CCE saves and reopening.
+Invalid saved preference records fall back safely to sheet defaults.

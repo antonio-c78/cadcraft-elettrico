@@ -177,7 +177,7 @@ impl DocState {
     /// The drawing has changes not saved to its file, or the Block Editor has changes not yet
     /// saved into its block.
     pub fn is_dirty(&self) -> bool {
-        !Arc::ptr_eq(self.drawing(), &self.saved) || self.block_unsaved()
+        !Arc::ptr_eq(self.drawing(), &self.saved) || self.block_unsaved() || self.unifilar_grid.is_some_and(|g| g.unsaved(&self.saved))
     }
     /// After undo/redo replaced the drawing (`before` is the one shown until then): if the current
     /// layout no longer exists, follow it to its other name when it was renamed (same tab order,
@@ -816,14 +816,16 @@ impl Session {
             && self.space() == Space::Model
             && st.block_edit.is_none()
         {
-            settings.gridunit = grid.spacing;
-            settings.gridmode = grid.visible;
-            settings.isodraft = false;
-            settings.snapmode = grid.snap_enabled;
-            settings.snapunit.y = grid.spacing.y * f64::from(settings.gridmajor.max(1));
-            settings.polarsnap = false;
+            grid.preferences.apply(&mut settings);
         }
         settings
+    }
+    /// The effective native grid frame, including per-sheet unifilar defaults.
+    pub fn drafting_grid_frame(&self) -> (Vec2, f64) {
+        if let Some(g) = cmd::electrical::unifilar::grid::active(self) {
+            return (g.preferences.origin, g.preferences.angle.to_radians());
+        }
+        self.doc().map(snap::grid_frame).unwrap_or((Vec2::ZERO, 0.))
     }
     /// The space commands act on (model space while working inside a layout viewport).
     pub fn space(&self) -> Space {
@@ -901,6 +903,9 @@ impl Session {
         (spec.enabled)(self).map_err(|m| EngineError::Disabled(spec.id.into(), m))?;
         if let Some(why) = cmd::blocks::bedit::refused_in_editor(self, spec.id) {
             return Err(EngineError::Disabled(spec.id.into(), why));
+        }
+        if matches!(spec.id, "qsave" | "saveas" | "electrical.project.save") {
+            cmd::electrical::unifilar::grid::sync(self)?;
         }
         let before = self.state().ok().map(|s| (s.doc.clone(), s.selection.clone(), s.uid));
         let editing = self.state().is_ok_and(|s| s.block_edit.is_some());
@@ -1334,6 +1339,9 @@ impl Session {
         {
             st.push_undo(Snapshot { label: label.to_string(), doc: run.before, selection: run.selection_before });
             st.revision += 1;
+        }
+        if let Err(e) = cmd::electrical::unifilar::grid::sync(self) {
+            self.echo(e.to_string());
         }
     }
 

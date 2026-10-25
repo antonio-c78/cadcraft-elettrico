@@ -118,11 +118,11 @@ pub fn lattice_snap(p: Vec2, d: f64, origin: Vec2, angle: f64) -> Vec2 {
 /// isometric lattice, and the settings with grid snap off so the rectangular grid leaves it be.
 /// Otherwise both unchanged, also when PolarSnap (SNAPTYPE 1) is the snap type: snap mode then
 /// steps along the tracking paths instead.
-pub(crate) fn grid_snap(doc: &cadcraft_doc::Drawing, mut s: Settings, p: Vec2) -> (Vec2, Settings) {
+pub(crate) fn grid_snap(mut s: Settings, p: Vec2, frame: (Vec2, f64)) -> (Vec2, Settings) {
     if !(s.snapmode && s.isodraft) || s.polarsnap {
         return (p, s);
     }
-    let (origin, angle) = super::grid_frame(doc);
+    let (origin, angle) = frame;
     s.snapmode = false;
     (lattice_snap(p, s.snapunit.y, origin, angle), s)
 }

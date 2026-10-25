@@ -171,7 +171,7 @@ fn run_dsettings(s: &mut Session, p: &Value) -> Result<Value> {
         s.settings.polarang = a.to_radians();
     }
     if let Some(m) = p.get("gridmajor").and_then(Value::as_u64) {
-        s.settings.gridmajor = (m as u32).clamp(1, 100);
+        crate::sysvars::set(s, "GRIDMAJOR", &json!(m.clamp(1, 100)))?;
     }
     s.touch();
     Ok(serde_json::to_value(s.drafting_settings()).unwrap_or(Value::Null))

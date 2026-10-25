@@ -295,10 +295,10 @@ fn opening_unifilar_aligns_half_columns_without_changing_files_or_plan_settings(
     let q =
         cadcraft_engine::snap::tracking::CursorQuery { base: None, deferred: false, corner: false, aperture: 0.1, tol: 0.1, now: 0.0, shift: false };
     let raw = Vec2::new(133.567, 237.1);
-    assert_eq!(s.snap_cursor(raw, &q).point, Vec2::new(raw.x, 237.5));
+    assert_eq!(s.snap_cursor(raw, &q).point, Vec2::new(126.0, 237.5));
     s.viewport_px = (4000.0, 3000.0);
-    assert_eq!(s.snap_cursor(raw, &q).point, Vec2::new(raw.x, 237.5), "zoom must not change row heights");
-    assert_eq!(s.snap_cursor(Vec2::new(raw.x, -11.8), &q).point, Vec2::new(raw.x, -12.5));
+    assert_eq!(s.snap_cursor(raw, &q).point, Vec2::new(126.0, 237.5), "zoom must not change row heights");
+    assert_eq!(s.snap_cursor(Vec2::new(raw.x, -11.8), &q).point, Vec2::new(126.0, -12.5));
     s.execute("snap", &json!({})).unwrap();
     assert!(!s.drafting_settings().snapmode);
     assert_eq!(s.snap_cursor(raw, &q).point, raw);

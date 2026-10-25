@@ -5,6 +5,7 @@ mod annotations;
 pub mod circuits;
 pub mod command_fields;
 pub mod connections;
+pub(crate) mod grid;
 mod markers;
 mod network;
 pub mod placement;
@@ -13,14 +14,7 @@ mod schema;
 pub use schema::Cell;
 const CMD: &str = "electrical.unifilar.new";
 
-/// View-only settings: opening a sheet never rewrites its drawing or the user's profile.
-#[derive(Clone, Copy, Debug)]
-pub struct Grid {
-    pub origin: Vec2,
-    pub spacing: Vec2,
-    pub visible: bool,
-    pub snap_enabled: bool,
-}
+pub use grid::Grid;
 pub(crate) fn drawing_grid(d: &cadcraft_doc::Drawing) -> Option<Grid> {
     if d.header.i64("INSUNITS", 0) != 4 || d.entity_count() > 10000 {
         return None;
@@ -61,7 +55,7 @@ pub(crate) fn drawing_grid(d: &cadcraft_doc::Drawing) -> Option<Grid> {
         (55.0, 17.75)
     };
     // Five minor rows form a stable 12.5 mm placement row in the standard profile.
-    Some(Grid { origin: Vec2::new(left, 0.0), spacing: Vec2::new(step, 2.5), visible: true, snap_enabled: true })
+    Some(Grid::new(d, e.handle, Vec2::new(left, 0.0), Vec2::new(step, 2.5)))
 }
 
 #[derive(Deserialize)]

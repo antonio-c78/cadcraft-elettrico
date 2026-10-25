@@ -41,6 +41,7 @@ pub fn show(app: &mut CadApp, ctx: &egui::Context) {
 fn dsettings(app: &mut CadApp, ctx: &egui::Context, open: &mut bool) {
     let settings = app.session.drafting_settings();
     let (mut snapunit, mut gridunit) = (settings.snapunit, settings.gridunit);
+    let mut gridmajor = settings.gridmajor;
     let mut gridmode = settings.gridmode;
     let mut snapmode = settings.snapmode;
     egui::Window::new(crate::tl!("Drafting Settings")).id(egui::Id::new("Drafting Settings")).open(open).resizable(false).show(ctx, |ui| {
@@ -74,8 +75,10 @@ fn dsettings(app: &mut CadApp, ctx: &egui::Context, open: &mut bool) {
         ui.horizontal(|ui| {
             ui.label(crate::tl!("Grid spacing"));
             ui.add(egui::DragValue::new(&mut gridunit.x).speed(0.05).range(0.0..=1e6).clamp_existing_to_range(false));
+            ui.label(crate::tl!("Y"));
+            ui.add(egui::DragValue::new(&mut gridunit.y).speed(0.05).range(0.0..=1e6).clamp_existing_to_range(false));
             ui.label(crate::tl!("Major line every"));
-            ui.add(egui::DragValue::new(&mut s.gridmajor).range(1..=100));
+            ui.add(egui::DragValue::new(&mut gridmajor).range(1..=100));
         });
         ui.separator();
         ui.heading(crate::tl!("Polar Tracking"));
@@ -142,6 +145,9 @@ fn dsettings(app: &mut CadApp, ctx: &egui::Context, open: &mut bool) {
     }
     if gridmode != settings.gridmode {
         let _ = app.run("setvar", json!({"name":"GRIDMODE","value":gridmode}));
+    }
+    if gridmajor != settings.gridmajor {
+        let _ = app.run("setvar", json!({"name":"GRIDMAJOR","value":gridmajor}));
     }
     for (name, before, after) in [("SNAPUNIT", settings.snapunit, snapunit), ("GRIDUNIT", settings.gridunit, gridunit)] {
         if before != after {
