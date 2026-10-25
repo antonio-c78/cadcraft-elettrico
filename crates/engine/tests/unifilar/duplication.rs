@@ -115,6 +115,71 @@ fn duplicate_circuit_starts_at_root_output_copies_other_columns_and_detaches_ups
         assert_eq!(data(read.entity(h).unwrap(), "CC_OBJECT_ID"), data(f.s.doc().unwrap().entity(h).unwrap(), "CC_OBJECT_ID"));
     }
 }
+
+#[test]
+fn moving_rooted_circuit_uses_copy_scope_but_keeps_upstream_and_existing_identities() {
+    let mut f = fixture();
+    clear(&mut f, &[0, 1]);
+    f.s.execute("electrical.project.new", &json!({"name":"Move"})).unwrap();
+    f.s.execute("electrical.project.add", &json!({})).unwrap();
+    let reference = f.s.execute("electrical.project.reference.insert", &json!({"at":[27.5,282.5],"kind":"input"})).unwrap();
+    let feed = f.link(json!({"version":3,"kind":"wire","from":{"handle":reference["handle"],"port":"in"},"to":f.port(0,"in"),"y":280.}));
+    let wire = f.link(json!({"version":3,"kind":"wire","from":f.port(0,"out"),"to":f.port(1,"in"),"y":258.}));
+    let old_path = f.path(&wire["handle"]);
+    let before = f.s.doc().unwrap().clone();
+    let devices: Vec<_> = before.model.iter().map(|e| e.handle).collect();
+    let result = f
+        .s
+        .execute("electrical.unifilar.circuit.move", &json!({"model":f.model,"handle":f.devices[0],"mode":"circuit","column":3,"backup_dir":f.root}))
+        .unwrap();
+    assert_eq!(result["columns"], json!([1, 2]));
+    for (i, col) in [(0, 3), (1, 4)] {
+        let m = f.s.execute("electrical.unifilar.read", &json!({"handle":f.devices[i]})).unwrap();
+        assert_eq!(m["column"], col);
+    }
+    assert_eq!(f.path(&wire["handle"]), old_path.iter().map(|p| [p[0] + 70., p[1]]).collect::<Vec<_>>());
+    assert_eq!(f.path(&feed["handle"]).first(), Some(&[27.5, 282.5]));
+    assert_eq!(f.path(&feed["handle"]).last(), Some(&[97.5, 275.]));
+    assert_eq!(devices, f.s.doc().unwrap().model.iter().map(|e| e.handle).collect::<Vec<_>>());
+    let after = f.s.doc().unwrap().clone();
+    f.s.undo().unwrap();
+    assert_eq!(f.s.doc().unwrap().model, before.model);
+    f.s.redo().unwrap();
+    assert_eq!(f.s.doc().unwrap().model, after.model);
+}
+
+#[test]
+fn moving_circuit_uses_root_column_not_leftmost_and_leaves_unconnected_apparatus() {
+    let mut f = fixture();
+    clear(&mut f, &[1]);
+    let child =
+        f.s.execute("electrical.unifilar.insert", &json!({"model":f.model,"id":"dev","at":[27.5,210.],"fields":{},"backup_dir":f.root})).unwrap();
+    let foreign =
+        f.s.execute("electrical.unifilar.insert", &json!({"model":f.model,"id":"dev","at":[27.5,185.],"fields":{},"backup_dir":f.root})).unwrap();
+    let wire = f.link(json!({"version":3,"kind":"wire","from":f.port(1,"out"),"to":{"handle":child["handle"],"port":"in"},"y":225.}));
+    let old_path = f.path(&wire["handle"]);
+    let unrelated = f.s.doc().unwrap().entity(Handle::parse_hex(foreign["handle"].as_str().unwrap()).unwrap()).unwrap().clone();
+    f.s.execute("electrical.unifilar.circuit.move", &json!({"model":f.model,"handle":f.devices[1],"mode":"circuit","column":4,"backup_dir":f.root}))
+        .unwrap();
+    assert_eq!(f.s.execute("electrical.unifilar.read", &json!({"handle":f.devices[1]})).unwrap()["column"], 4);
+    assert_eq!(f.s.execute("electrical.unifilar.read", &json!({"handle":child["handle"]})).unwrap()["column"], 3);
+    assert_eq!(f.s.doc().unwrap().entity(unrelated.handle).unwrap(), &unrelated);
+    assert_eq!(f.path(&wire["handle"]), old_path.iter().map(|p| [p[0] + 70., p[1]]).collect::<Vec<_>>());
+}
+
+#[test]
+fn moving_circuit_moves_its_downstream_bar_and_branches_together() {
+    let mut f = fixture();
+    clear(&mut f, &[0, 1]);
+    let bus = f.link(json!({"version":1,"kind":"bus","from":f.port(0,"out"),"span":[45,75],"y":262.5}));
+    let branch = f.link(json!({"version":1,"kind":"branch","bus":bus["handle"],"to":f.port(1,"in"),"y":262.5}));
+    let old = f.path(&branch["handle"]);
+    f.s.execute("electrical.unifilar.circuit.move", &json!({"model":f.model,"handle":f.devices[0],"mode":"circuit","column":3,"backup_dir":f.root}))
+        .unwrap();
+    let read = f.s.execute("electrical.unifilar.link.read", &json!({"handle":bus["handle"]})).unwrap();
+    assert_eq!(read["link"]["span"], json!([115., 145.]));
+    assert_eq!(f.path(&branch["handle"]), old.iter().map(|p| [p[0] + 70., p[1]]).collect::<Vec<_>>());
+}
 #[test]
 fn arrays_are_atomic_on_occupied_out_of_bounds_and_hostile_step_and_cancel() {
     use cadcraft_engine::{Input, geom::Vec2};

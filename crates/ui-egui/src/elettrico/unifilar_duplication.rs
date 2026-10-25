@@ -5,8 +5,6 @@ use serde_json::{Value, json};
 pub(super) struct State {
     open: bool,
     circuit: bool,
-    copies: usize,
-    step: i64,
     renumber: bool,
     root: Option<String>,
     uid: u64,
@@ -22,8 +20,6 @@ pub(super) fn command(app: &mut CadApp, id: &str, p: &Value) -> Result<Value, St
     app.elettrico.unifilar_duplication = State {
         open: true,
         circuit: id.ends_with(".circuit"),
-        copies: if id.ends_with(".series") { 3 } else { 1 },
-        step: 1,
         renumber: true,
         root: p["handle"].as_str().map(str::to_owned),
         uid: app.session.state().map_err(|e| e.to_string())?.uid,
@@ -99,29 +95,15 @@ pub(super) fn show(app: &mut CadApp, ctx: &egui::Context) {
         } else {
             ui.colored_label(ui.visuals().warn_fg_color, "Seleziona un apparecchio nel disegno; questa finestra può restare aperta.");
         }
-        if !st.circuit {
-            ui.horizontal(|ui| {
-                ui.label("Numero copie (oltre all'originale)");
-                ui.add(egui::DragValue::new(&mut st.copies).range(1..=32));
-            });
-            if st.copies > 1 {
-                ui.horizontal(|ui| {
-                    ui.label("Passo in colonne");
-                    ui.add(egui::DragValue::new(&mut st.step).range(-128..=128));
-                });
-                ui.small("Passo positivo: verso destra. Passo negativo: verso sinistra.");
-            }
-        }
         ui.checkbox(&mut st.renumber, "Rinumera automaticamente le sigle nella tavola");
         ui.small("Ogni copia riceve nuove identità, indipendenti dalle sigle visibili.");
         if let Some(error) = &st.error {
             ui.colored_label(ui.visuals().error_fg_color, error);
         }
-        start =
-            ui.add_enabled(st.root.is_some() && app.session.running.is_none() && st.step != 0, egui::Button::new("Anteprima e posiziona")).clicked();
+        start = ui.add_enabled(st.root.is_some() && app.session.running.is_none(), egui::Button::new("Anteprima e posiziona")).clicked();
     });
     if start {
-        let params = json!({"model":super::unifilar_browser::path(app),"handle":st.root,"mode":if st.circuit{"circuit"}else{"column"},"copies":st.copies,"step":st.step,"renumber":st.renumber});
+        let params = json!({"model":super::unifilar_browser::path(app),"handle":st.root,"mode":if st.circuit{"circuit"}else{"column"},"copies":1,"step":1,"renumber":st.renumber});
         match app.run("electrical.unifilar.duplicate.prepare", params) {
             Ok(_) => {
                 app.start("electrical.unifilar.duplicate.place");

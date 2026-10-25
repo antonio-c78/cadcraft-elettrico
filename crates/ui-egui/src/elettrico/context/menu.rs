@@ -31,7 +31,7 @@ fn category(id: &str) -> Category {
     match id {
         "ui.elettrico.unifilar.circuit.move"
         | "ui.elettrico.unifilar.duplicate.column"
-        | "ui.elettrico.unifilar.duplicate.series"
+        | "ui.elettrico.unifilar.column.move"
         | "ui.elettrico.unifilar.duplicate.circuit"
         | "move"
         | "copy"
@@ -208,7 +208,7 @@ mod tests {
     #[test]
     fn unifilar_bulk_scope_promotes_native_move_and_wire_actions_stay_specific() {
         let g = groups(&app(&["CC_UNIFILARE_DEVICE", "CC_UNIFILARE_LINK"])).unwrap();
-        assert!(ids_for(&g, "ui.elettrico.unifilar.circuit.move"));
+        assert!(ids_for(&g, "ui.elettrico.unifilar.column.move"));
         for id in ["move", "copy", "rotate", "erase"] {
             assert!(!ids_for(&g, id));
         }

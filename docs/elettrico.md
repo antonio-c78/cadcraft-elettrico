@@ -455,11 +455,13 @@ The explicit low-level `.link.delete` API retains whole-link semantics.
 ## Unifilar column and rooted circuit duplication
 
 The Unifilare toolbar and the focused shortcut menu's Move and copy group expose
-Duplica colonna, Serie di colonne and Duplica circuito. Original code-drawn icons
+Duplica colonna and Duplica circuito. The separate Serie di colonne command was
+removed from menus, toolbar and shortcut menus at the owner’s request. Its bounded
+array engine remains internal for compatibility and possible future reuse. Original code-drawn icons
 use the existing CADCraft palette and stroke style. Select a single apparatus,
 choose the copy options, inspect the scope, then pick the destination column in
-live preview. Escape cancels. Arrays specify the number of additional copies and
-a signed step in columns. Occupied, incompatible or out-of-sheet destinations
+live preview. Escape cancels. The UI creates a single copy. The internal array API
+accepts a copy count and signed column step. Occupied, incompatible or out-of-sheet destinations
 reject the whole operation; one Undo restores the entire array.
 
 Column scope retains all apparatus/data in that column and only physical vertical
@@ -536,3 +538,22 @@ and the sheet marker before saving, or after an interactive command ends. During
 an active command F9/settings changes do not replace its drawing snapshot, so the
 next wire point remains valid. Preferences survive DXF/CCE saves and reopening.
 Invalid saved preference records fall back safely to sheet defaults.
+
+
+## Moving columns and rooted circuits
+
+Sposta colonna selects all apparatus and owned table data in the picked columns;
+select one apparatus in each column to move several columns together. Sposta
+circuito uses exactly the same rooted downstream scope as Duplica circuito,
+starting at the chosen apparatus output; unrelated apparatus in those same source
+columns remain fixed. The destination refers to the root column, even when a
+branch extends to its left. Both commands share column mapping, preview,
+validation, backup and a single Undo/Redo operation. Moving preserves original
+object identities and keeps the upstream feed attached, unlike duplication.
+Internal circuit routes retain their bends rigidly; external feeds stretch or
+reroute. Shared PE and foreign terminals remain fixed. Setup windows use the
+same selection/preview/placement workflow as duplication and can remain open
+while selecting in the drawing.
+
+Automation: electrical.unifilar.circuit.move/prepare accept mode column (legacy
+default) or circuit, plus the existing model, handle/handles and destination column.

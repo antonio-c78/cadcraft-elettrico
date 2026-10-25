@@ -59,6 +59,7 @@ pub struct State {
     unifilar_browser: unifilar_browser::State,
     unifilar_connections: unifilar_connections::State,
     unifilar_duplication: unifilar_duplication::State,
+    unifilar_circuits: unifilar_circuits::State,
     library_editor: library_editor::State,
 }
 
@@ -92,6 +93,7 @@ impl Default for State {
             unifilar_browser: unifilar_browser::State::default(),
             unifilar_connections: unifilar_connections::State::default(),
             unifilar_duplication: unifilar_duplication::State::default(),
+            unifilar_circuits: unifilar_circuits::State::default(),
             library_editor: library_editor::State::default(),
         }
     }
@@ -132,11 +134,11 @@ pub fn route(app: &mut CadApp, id: &str, params: &Value) -> Option<Result<Value,
     if let Some(result) = library_editor::route(app, id, params) {
         return Some(result);
     }
-    if ["ui.elettrico.unifilar.duplicate.column", "ui.elettrico.unifilar.duplicate.series", "ui.elettrico.unifilar.duplicate.circuit"].contains(&id) {
+    if ["ui.elettrico.unifilar.duplicate.column", "ui.elettrico.unifilar.duplicate.circuit"].contains(&id) {
         return Some(unifilar_duplication::command(app, id, params));
     }
-    if id == "ui.elettrico.unifilar.circuit.move" {
-        return Some(unifilar_circuits::command(app, params));
+    if matches!(id, "ui.elettrico.unifilar.circuit.move" | "ui.elettrico.unifilar.column.move") {
+        return Some(unifilar_circuits::command(app, id, params));
     }
     if id.starts_with("ui.elettrico.unifilar.link.") {
         return Some(unifilar_connections::command(app, id, params));

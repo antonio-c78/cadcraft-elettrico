@@ -15,6 +15,7 @@ pub struct Draft {
     baseline: Arc<Drawing>,
     layout: schema::Layout,
     handles: BTreeSet<Handle>,
+    rigid_wires: Option<BTreeSet<Handle>>,
     source: usize,
     columns: BTreeSet<usize>,
     selection: Vec<Handle>,
@@ -22,6 +23,7 @@ pub struct Draft {
     cache: Cached,
     pub summary: String,
     pub error: Option<String>,
+    pub circuit: bool,
 }
 fn error(s: impl Into<String>) -> EngineError {
     bad(CMD, s)
@@ -35,13 +37,40 @@ fn message(e: EngineError) -> String {
 fn build(s: &Session, p: &Value) -> Result<Draft> {
     let (fallback, _, _) = schema::load(s, p["model"].as_str().ok_or_else(|| error("Indica il modello della tavola."))?)?;
     let layout = placement::sheet(s, &fallback)?;
-    let columns = scope::selected_columns(s, p)?;
-    let source = columns.first().copied().ok_or_else(|| error("Seleziona un apparecchio unifilare."))?;
-    let mut handles = BTreeSet::new();
+    if s.space() != Space::Model || s.state()?.block_edit.is_some() {
+        return Err(error("Usa lo spazio modello e termina la modifica del simbolo."));
+    }
+    let mode = p["mode"].as_str().unwrap_or("column");
+    if !["column", "circuit"].contains(&mode) {
+        return Err(error("Scegli colonna oppure circuito."));
+    }
+    let circuit = mode == "circuit";
+    let (columns, source, mut handles, rigid_wires) = if circuit {
+        let picked = s.selection();
+        let root = if let Some(value) = p.get("handle") {
+            value.as_str().and_then(Handle::parse_hex).ok_or_else(|| error("Identificativo del simbolo iniziale non valido."))?
+        } else {
+            picked.first().copied().filter(|_| picked.len() == 1).ok_or_else(|| error("Seleziona un solo simbolo iniziale del circuito."))?
+        };
+        let selected = connections::duplication::circuit_scope(s.doc()?, &layout, root)?;
+        let source = placement::data(s.doc()?.entity(root).ok_or_else(|| error("Apparecchio assente."))?, APP)?
+            .and_then(|m| m["column"].as_u64())
+            .and_then(|c| usize::try_from(c).ok())
+            .ok_or_else(|| error("Colonna assente."))?;
+        (selected.columns, source, selected.devices, Some(selected.wires))
+    } else {
+        let columns = scope::selected_columns(s, p)?;
+        let source = columns.first().copied().ok_or_else(|| error("Seleziona un apparecchio unifilare."))?;
+        (columns, source, BTreeSet::new(), None)
+    };
     let mut count = 0;
     for e in s.doc()?.model.iter() {
         if let Some(m) = placement::data(e, APP)?
-            && m["column"].as_u64().and_then(|v| usize::try_from(v).ok()).is_some_and(|c| columns.contains(&c))
+            && if circuit {
+                handles.contains(&e.handle)
+            } else {
+                m["column"].as_u64().and_then(|v| usize::try_from(v).ok()).is_some_and(|c| columns.contains(&c))
+            }
         {
             handles.insert(e.handle);
             if m["kind"] == "device" {
@@ -57,6 +86,7 @@ fn build(s: &Session, p: &Value) -> Result<Draft> {
         baseline: s.state()?.doc.clone(),
         layout,
         handles,
+        rigid_wires,
         source,
         columns: columns.clone(),
         selection: s.selection(),
@@ -64,6 +94,7 @@ fn build(s: &Session, p: &Value) -> Result<Draft> {
         cache: Arc::new(Mutex::new(None)),
         summary: format!("Colonne {} · {count} apparecchi", columns.iter().map(usize::to_string).collect::<Vec<_>>().join(", ")),
         error: None,
+        circuit,
     })
 }
 fn column(d: &Draft, x: f64) -> Result<usize> {
@@ -112,9 +143,12 @@ fn transformed(d: &Draft, target: usize) -> Result<Arc<Drawing>> {
             return Err(error("Annulla la trasformazione generica dell'apparecchio."));
         }
         meta["at"] = json!([at[0] + dx, at[1]]);
-        let old_column = meta["column"].as_u64().and_then(|v| usize::try_from(v).ok()).ok_or_else(|| error("Colonna non valida."))?;
-        let (new_column, _) = mapping.get(&old_column).ok_or_else(|| error("Colonna fuori dal gruppo."))?;
-        meta["column"] = json!(new_column);
+        if let Some(old_column) = meta["column"].as_u64().and_then(|v| usize::try_from(v).ok()) {
+            let (new_column, _) = mapping.get(&old_column).ok_or_else(|| error("Colonna fuori dal gruppo."))?;
+            meta["column"] = json!(new_column);
+        } else if meta["kind"] != "line_marker" && !crate::project::references::is_reference(e) {
+            return Err(error("Colonna non valida."));
+        }
         drawing.modify_entity(*h, |e| {
             if let EntityKind::Insert(i) = &mut e.kind {
                 i.insert.x += dx;
@@ -122,7 +156,7 @@ fn transformed(d: &Draft, target: usize) -> Result<Arc<Drawing>> {
             placement::tags(&mut e.common, APP, &meta);
         })?;
     }
-    connections::relocate(&d.baseline, &mut drawing, &d.layout, &d.handles, dx)?;
+    connections::relocate_group(&d.baseline, &mut drawing, &d.layout, &d.handles, dx, d.rigid_wires.as_ref())?;
     Ok(Arc::new(drawing))
 }
 fn candidate(d: &Draft, target: usize) -> Result<Arc<Drawing>> {
@@ -166,7 +200,7 @@ fn run(s: &mut Session, p: &Value) -> Result<Value> {
 }
 pub(super) fn specs() -> Vec<CommandSpec> {
     vec![
-        CommandSpec::new(CMD, "Move electrical circuit", run).params("{model,handle?|handles?,column,backup_dir?}"),
+        CommandSpec::new(CMD, "Move electrical circuit", run).params("{model,mode?:column|circuit,handle?|handles?,column,backup_dir?}"),
         CommandSpec::new("electrical.unifilar.circuit.prepare", "Prepare circuit move", prepare).noundo(),
         CommandSpec::new("electrical.unifilar.circuit.place", "Place electrical circuit", |_, _| {
             Err(error("Avvia Sposta circuito dal menu Elettrico."))

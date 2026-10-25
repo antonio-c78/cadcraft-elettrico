@@ -10,7 +10,7 @@ const APP: &str = "CC_UNIFILARE_LINK";
 mod contacts;
 pub mod duplication;
 mod relocate;
-pub(super) use relocate::relocate;
+pub(super) use relocate::relocate_group;
 mod dots;
 mod splice;
 pub(super) use splice::splice;

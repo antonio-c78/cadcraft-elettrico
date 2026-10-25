@@ -68,11 +68,11 @@ pub(crate) fn entries(app: &CadApp) -> Vec<Entry> {
         } else if e.common.xdata.iter().any(|t| t.code == 1001 && t.value == "CC_UNIFILARE_DEVICE") {
             children.push(item("ui.elettrico.unifilar.edit", "Modifica apparecchio..."));
             if connections::has_port(doc, *h, "in") || connections::has_port(doc, *h, "out") {
-                children.push(item("ui.elettrico.unifilar.circuit.move", "Sposta circuito..."));
+                children.push(item("ui.elettrico.unifilar.column.move", "Sposta colonna..."));
                 children.push(item("ui.elettrico.unifilar.duplicate.column", "Duplica colonna..."));
-                children.push(item("ui.elettrico.unifilar.duplicate.series", "Serie di colonne..."));
             }
             if connections::has_port(doc, *h, "out") {
+                children.push(item("ui.elettrico.unifilar.circuit.move", "Sposta circuito..."));
                 children.push(item("ui.elettrico.unifilar.duplicate.circuit", "Duplica circuito..."));
                 children.push(item("ui.elettrico.unifilar.link.series", "Collega simboli..."));
                 children.push(item("ui.elettrico.unifilar.link.bus", "Barra di distribuzione..."));
@@ -103,8 +103,8 @@ pub(crate) fn entries(app: &CadApp) -> Vec<Entry> {
         return vec![Entry::Sub {
             label: "Elettrico".into(),
             children: vec![Entry::Item {
-                label: "Sposta circuito...".into(),
-                id: "ui.elettrico.unifilar.circuit.move".into(),
+                label: "Sposta colonna...".into(),
+                id: "ui.elettrico.unifilar.column.move".into(),
                 shortcut: None,
                 enabled: app.session.running.is_none(),
             }],
@@ -453,7 +453,9 @@ mod tests {
             app.session.set_selection(vec![h]);
             let actions = ids(&app);
             assert!(actions.contains(&"ui.elettrico.unifilar.duplicate.column".into()));
-            assert!(actions.contains(&"ui.elettrico.unifilar.duplicate.series".into()));
+            assert!(!actions.contains(&"ui.elettrico.unifilar.duplicate.series".into()));
+            assert!(actions.contains(&"ui.elettrico.unifilar.column.move".into()));
+            assert_eq!(actions.contains(&"ui.elettrico.unifilar.circuit.move".into()), circuit);
             assert_eq!(actions.contains(&"ui.elettrico.unifilar.duplicate.circuit".into()), circuit);
         }
         let other = add(&mut app, "CC_UNIFILARE_DEVICE");
@@ -467,7 +469,8 @@ mod tests {
         let b = add(&mut app, "CC_UNIFILARE_DEVICE");
         let wire = add(&mut app, "CC_UNIFILARE_LINK");
         app.session.set_selection(vec![a, b, wire]);
-        assert!(ids(&app).contains(&"ui.elettrico.unifilar.circuit.move".into()));
+        assert!(ids(&app).contains(&"ui.elettrico.unifilar.column.move".into()));
+        assert!(!ids(&app).contains(&"ui.elettrico.unifilar.circuit.move".into()));
     }
     #[test]
     fn menu_is_specific_to_native_objects_and_bulk_actions_are_shared() {

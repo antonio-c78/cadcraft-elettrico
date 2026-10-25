@@ -143,13 +143,14 @@ fn affected_routes(env: &Env, moved: &BTreeSet<Handle>, nodes: &BTreeSet<String>
     Ok(affected)
 }
 
-/// Move selected column groups. Shared bars and foreign terminals stay fixed.
-pub(crate) fn relocate(
+/// Internal circuit routes move rigidly; external feeds retain their fixed end.
+pub(in crate::cmd::electrical::unifilar) fn relocate_group(
     before: &Drawing,
     drawing: &mut Drawing,
     layout: &schema::Layout,
     moved: &BTreeSet<Handle>,
     dx: f64,
+    rigid: Option<&BTreeSet<Handle>>,
 ) -> Result<BTreeSet<Handle>> {
     let old = Env::new(before, layout)?;
     let columns: BTreeSet<_> = moved
@@ -162,7 +163,10 @@ pub(crate) fn relocate(
     for (h, original) in &old.links {
         let mut l = original.clone();
         for n in [&mut l.start_node, &mut l.end_node].into_iter().flatten() {
-            if layout.columns.iter().any(|c| columns.contains(&(c.index as u64)) && n.at[0] >= c.bounds[0] && n.at[0] <= c.bounds[2]) {
+            if rigid.map_or_else(
+                || layout.columns.iter().any(|c| columns.contains(&(c.index as u64)) && n.at[0] >= c.bounds[0] && n.at[0] <= c.bounds[2]),
+                |wires| wires.contains(h),
+            ) {
                 n.at[0] += dx;
                 shifted.insert(n.id.clone());
             }
@@ -204,6 +208,9 @@ pub(crate) fn relocate(
             && m["attachment"]["part"] == "bar"
             && let Some(owner) = m["line"].as_str()
         {
+            if Handle::parse_hex(owner).is_some_and(|h| rigid.is_some_and(|wires| wires.contains(&h))) {
+                continue;
+            }
             let (_, span) = env.bus(owner)?;
             let x = m["at"].get(0).and_then(Value::as_f64).ok_or_else(|| err("Posizione del marcatore non valida."))? + dx;
             if x < span[0] || x > span[1] {
@@ -224,14 +231,19 @@ pub(crate) fn relocate(
         }
         let path = old.paths.get(&h).ok_or_else(|| err("Percorso assente."))?;
         if l.kind == "bus" {
-            // The common distribution span never follows one circuit's column.
-            if l.from.as_ref().is_some_and(|p| Handle::parse_hex(&p.handle).is_some_and(|h| moved.contains(&h))) {
+            // A downstream-owned bar follows the whole circuit; a common upstream bar stays fixed.
+            let owned = rigid.is_some_and(|wires| wires.contains(&h));
+            if owned {
+                l.span = l.span.map(|span| [span[0] + dx, span[1] + dx]);
+            }
+            if owned || l.from.as_ref().is_some_and(|p| Handle::parse_hex(&p.handle).is_some_and(|h| moved.contains(&h))) {
                 editable(drawing, h)?;
                 let (g, p) = env.geometry(&l)?;
                 env.wires.retain(|(owner, _, _)| *owner != h);
                 env.wires.extend(g.iter().filter_map(|k| if let EntityKind::Line(v) = k { Some((h, v.a.xy(), v.b.xy())) } else { None }));
                 store(drawing, Some(h), &l, g, p.clone())?;
                 env.paths.insert(h, p);
+                env.links.insert(h, l);
                 changed.insert(h);
             }
             continue;
@@ -271,7 +283,11 @@ pub(crate) fn relocate(
         let a = env.start(&l)?;
         let b = env.end(&l)?;
         let augmented = anchored(path, anchors.get(&h).map(Vec::as_slice).unwrap_or_default());
-        let desired = stretched(&augmented, a, b);
+        let desired = if rigid.is_some_and(|wires| wires.contains(&h)) {
+            augmented.iter().map(|p| *p + Vec2::new(dx, 0.)).collect()
+        } else {
+            stretched(&augmented, a, b)
+        };
         let affects =
             augmented.iter().zip(&desired).any(|(p, q)| !p.near(*q, 1e-7)) || serde_json::to_value(&l).map_err(|e| err(e.to_string()))? != upgraded;
         if !affects {

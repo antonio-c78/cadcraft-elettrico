@@ -6,6 +6,24 @@ mod scope;
 use scope::Plan;
 const DEVICE: &str = "CC_UNIFILARE_DEVICE";
 const CMD_COPY: &str = "electrical.unifilar.duplicate";
+
+/// The same rooted scope is used for moving and copying a circuit.
+pub(in crate::cmd::electrical::unifilar) struct CircuitScope {
+    pub devices: BTreeSet<Handle>,
+    pub columns: BTreeSet<usize>,
+    pub wires: BTreeSet<Handle>,
+}
+pub(in crate::cmd::electrical::unifilar) fn circuit_scope(d: &Drawing, layout: &schema::Layout, root: Handle) -> Result<CircuitScope> {
+    let e = d.entity(root).ok_or_else(|| fail("Apparecchio assente."))?;
+    let meta = placement::data(e, DEVICE)?.ok_or_else(|| fail("Seleziona un apparecchio unifilare."))?;
+    if meta["kind"] != "device" || references::is_reference(e) {
+        return Err(fail("Seleziona il simbolo iniziale del circuito."));
+    }
+    let column = meta["column"].as_u64().and_then(|n| usize::try_from(n).ok()).ok_or_else(|| fail("Colonna assente."))?;
+    let env = Env::new(d, layout)?;
+    let plan = scope::build(d, &env, root, column, "circuit")?;
+    Ok(CircuitScope { devices: plan.devices, columns: plan.columns, wires: plan.wires.iter().filter_map(|w| w.original).collect() })
+}
 type Cached = Arc<Mutex<Option<(usize, std::result::Result<(Arc<Drawing>, Vec<Handle>, Vec<String>), String>)>>>;
 
 #[derive(Clone)]
