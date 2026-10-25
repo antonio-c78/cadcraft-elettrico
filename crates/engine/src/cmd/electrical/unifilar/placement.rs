@@ -557,6 +557,7 @@ fn commit(s: &mut Session, p: Vec2) -> Result<Value> {
     } else {
         drawing.add(&Space::Model, common, kind)?
     };
+    drawing.modify_entity(h, crate::project::references::ensure_object_id)?;
     if d.target.is_none() && d.symbol.kind == "device" {
         super::connections::splice(&mut drawing, &d.layout, h)?;
     }

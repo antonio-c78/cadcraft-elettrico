@@ -450,3 +450,41 @@ drawing does not rewrite existing routes.
 Commands: `electrical.unifilar.section.delete {model,handle?,at:[x,y],backup_dir?}`
 for automation; `.section.prepare {model,handle?,at?,backup_dir?}` and interactive `.section.place` for the UI.
 The explicit low-level `.link.delete` API retains whole-link semantics.
+
+
+## Unifilar column and rooted circuit duplication
+
+The Unifilare toolbar and the focused shortcut menu's Move and copy group expose
+Duplica colonna, Serie di colonne and Duplica circuito. Original code-drawn icons
+use the existing CADCraft palette and stroke style. Select a single apparatus,
+choose the copy options, inspect the scope, then pick the destination column in
+live preview. Escape cancels. Arrays specify the number of additional copies and
+a signed step in columns. Occupied, incompatible or out-of-sheet destinations
+reject the whole operation; one Undo restores the entire array.
+
+Column scope retains all apparatus/data in that column and only physical vertical
+conductors connecting its terminals on the column axis. External feeds, branches
+and their dangling stubs are detached. Circuit scope starts at the chosen device's
+out terminal, follows downstream explicit junctions across columns, and excludes
+the root's upstream feed. It does not traverse the common PE rail or other project
+pages. A return into the upstream net is reported as ambiguous instead of guessing.
+Copied page references receive independent, pending pairs requiring explicit linking.
+
+Scope planning, identity remapping, and interactive publication are separate modules
+in `connections/duplication`. The physical graph is shared with section deletion:
+ordinary crossings never create connections. Each copy has independent device,
+wire, block and junction identities; anchors, taps, bus attachments and retained
+line markers are remapped. New native devices/wires receive persistent
+`CC_OBJECT_ID` UUIDs. A committed duplicate upgrades legacy source identities without
+replacing existing UUIDs; `CC_COPY_GROUP` groups each copy and `CC_CIRCUIT_ROOT`
+identifies the root of a duplicated circuit. These tags survive DXF and project
+round trips. They are independent of visible sigle, which can optionally be
+renumbered within the current sheet. Owned sigla annotations change without
+rewriting identical symbol glyphs or unrelated description text.
+
+Automation: `electrical.unifilar.duplicate {model,handle?,mode:column|circuit,
+column,copies?:1..32,step?:signed_columns,renumber?:bool,backup_dir?}`. Circuit mode
+accepts one copy; arrays apply to columns. The UI uses `.duplicate.prepare` and
+interactive `.duplicate.place`. Preview is read-only; publication validates routes,
+creates a pre-change backup and commits one transaction. Geometry, recursion and
+copy counts are bounded. No existing project is rewritten merely by opening it.

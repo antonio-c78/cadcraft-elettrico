@@ -29,7 +29,13 @@ pub(crate) struct Group {
 /// New electrical actions default to Edit until assigned another semantic category.
 fn category(id: &str) -> Category {
     match id {
-        "ui.elettrico.unifilar.circuit.move" | "move" | "copy" | "rotate" => Category::Move,
+        "ui.elettrico.unifilar.circuit.move"
+        | "ui.elettrico.unifilar.duplicate.column"
+        | "ui.elettrico.unifilar.duplicate.series"
+        | "ui.elettrico.unifilar.duplicate.circuit"
+        | "move"
+        | "copy"
+        | "rotate" => Category::Move,
         "ui.elettrico.unifilar.link.series"
         | "ui.elettrico.unifilar.link.bus"
         | "ui.elettrico.unifilar.link.branch"

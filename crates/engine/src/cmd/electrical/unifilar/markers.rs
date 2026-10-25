@@ -158,6 +158,7 @@ pub(super) fn refresh(d: &mut Drawing, layout: &schema::Layout) -> Result<()> {
                 i.insert = at.to3(0.0);
             }
             placement::tags(&mut e.common, "CC_UNIFILARE_DEVICE", &meta);
+            crate::project::references::ensure_object_id(e);
         })?;
     }
     Ok(())

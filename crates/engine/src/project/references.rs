@@ -143,6 +143,12 @@ fn tags(common: &mut Common, app: &str, value: &Value) {
 pub fn new_object_id(e: &mut Entity) {
     tags(&mut e.common, "CC_OBJECT_ID", &json!({"id":id()}));
 }
+/// Assign persistent identity on first electrical edit, preserving existing instances.
+pub fn ensure_object_id(e: &mut Entity) {
+    if !data(e, "CC_OBJECT_ID").and_then(|m| m["id"].as_str().map(str::to_owned)).is_some_and(|v| valid_id(&v)) {
+        new_object_id(e);
+    }
+}
 pub fn duplicate_entity(e: &mut Entity) {
     new_object_id(e);
     if is_reference(e) {

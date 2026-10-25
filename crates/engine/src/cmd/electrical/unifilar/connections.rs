@@ -8,6 +8,7 @@ use std::sync::Mutex;
 const CMD: &str = "electrical.unifilar.link";
 const APP: &str = "CC_UNIFILARE_LINK";
 mod contacts;
+pub mod duplication;
 mod relocate;
 pub(super) use relocate::relocate;
 mod dots;
@@ -616,6 +617,7 @@ fn store(d: &mut Drawing, target: Option<Handle>, l: &Link, geometry: Vec<Entity
     d.modify_entity(h, |e| {
         e.common.layer = layer.into();
         placement::tags(&mut e.common, APP, &json!({"owner":h.hex(),"link":l,"path":points}));
+        crate::project::references::ensure_object_id(e);
     })?;
     Ok(h)
 }
@@ -1137,6 +1139,7 @@ pub(super) fn specs() -> Vec<CommandSpec> {
             }),
     ];
     commands.extend(sections::specs());
+    commands.extend(duplication::specs());
     commands
 }
 struct Place;

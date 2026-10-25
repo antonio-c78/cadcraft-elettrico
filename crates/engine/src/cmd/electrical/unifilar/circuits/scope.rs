@@ -35,7 +35,7 @@ pub(super) fn selected_columns(s: &Session, p: &Value) -> Result<BTreeSet<usize>
     }
     Ok(columns)
 }
-pub(super) fn destinations(
+pub(in crate::cmd::electrical::unifilar) fn destinations(
     layout: &schema::Layout,
     columns: &BTreeSet<usize>,
     source: usize,

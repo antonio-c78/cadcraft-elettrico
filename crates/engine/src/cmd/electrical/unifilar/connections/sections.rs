@@ -1,6 +1,6 @@
 //! Logical-section deletion: graph planning, preview and atomic commit are separate.
 use super::*;
-mod graph;
+pub(super) mod graph;
 use graph::{End, Graph, projection};
 #[derive(Clone)]
 pub struct Draft {
@@ -45,7 +45,7 @@ fn valid(s: &Session, d: &Draft) -> Result<()> {
     }
     Ok(())
 }
-fn endpoint(l: &mut Link, end: bool, e: End) {
+pub(super) fn endpoint(l: &mut Link, end: bool, e: End) {
     if end {
         l.to = None;
         l.end_tap = None;
@@ -134,6 +134,7 @@ fn rewritten(d: &Draft, removed: &BTreeSet<usize>) -> Result<Drawing> {
                 e.common = original;
                 e.common.layer = layer;
                 placement::tags(&mut e.common, APP, &data);
+                crate::project::references::new_object_id(e);
             })?;
         }
         outputs.push((h, path, owners));

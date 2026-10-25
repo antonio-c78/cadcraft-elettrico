@@ -991,8 +991,8 @@ fn refreshing_an_older_overlapping_branch_marks_its_separation_before_explicit_e
     let e = f.s.doc().unwrap().entity(h).unwrap();
     let EntityKind::Insert(i) = &e.kind else { panic!() };
     let name = i.block.clone();
-    let mut meta: Value =
-        serde_json::from_str(&e.common.xdata.iter().filter(|t| t.code == 1000).map(|t| t.value.as_str()).collect::<String>()).unwrap();
+    // Read only the link payload: persistent instance identity is a separate XDATA app.
+    let mut meta = cadcraft_engine::project::references::data(e, "CC_UNIFILARE_LINK").unwrap();
     meta["link"]["tap"]["fraction"] = json!(0.3);
     meta["link"]["waypoints"].as_array_mut().unwrap().insert(0, json!([62.5, 215.]));
     meta["link"]["segment_modes"] = json!([]);
@@ -1492,3 +1492,6 @@ fn section_from_toolbar_needs_one_canvas_click_and_invalid_context_preserves_sel
     assert!(f.s.running.is_none());
     assert_eq!(dot_count(&f), 2);
 }
+
+#[path = "unifilar/duplication.rs"]
+mod duplication;

@@ -1,20 +1,20 @@
 //! Bounded physical graph: explicit attachments join vertices; mere crossings do not.
 use super::*;
 #[derive(Clone)]
-pub(super) enum End {
+pub(in crate::cmd::electrical::unifilar::connections) enum End {
     Port(Port),
     Bar(Tap),
     Pe(f64),
     Node(Anchor),
 }
 #[derive(Clone)]
-pub(super) struct Edge {
+pub(in crate::cmd::electrical::unifilar::connections) struct Edge {
     pub a: usize,
     pub b: usize,
     pub owners: BTreeSet<Handle>,
 }
 #[derive(Clone)]
-pub(super) struct Graph {
+pub(in crate::cmd::electrical::unifilar::connections) struct Graph {
     pub points: Vec<Vec2>,
     pub ends: BTreeMap<usize, End>,
     pub edges: Vec<Edge>,
@@ -37,7 +37,7 @@ fn join(parent: &mut [usize], a: usize, b: usize) {
         *p = a.min(b);
     }
 }
-pub(super) fn projection(path: &[Vec2], p: Vec2) -> Option<(f64, f64)> {
+pub(in crate::cmd::electrical::unifilar::connections) fn projection(path: &[Vec2], p: Vec2) -> Option<(f64, f64)> {
     let mut before = 0.;
     let mut best = None;
     for s in path.windows(2) {

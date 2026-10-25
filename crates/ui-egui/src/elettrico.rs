@@ -18,6 +18,7 @@ mod unifilar;
 mod unifilar_browser;
 mod unifilar_circuits;
 mod unifilar_connections;
+mod unifilar_duplication;
 
 fn catalog_environment() -> Option<String> {
     #[cfg(not(target_arch = "wasm32"))]
@@ -57,6 +58,7 @@ pub struct State {
     unifilar: unifilar::State,
     unifilar_browser: unifilar_browser::State,
     unifilar_connections: unifilar_connections::State,
+    unifilar_duplication: unifilar_duplication::State,
     library_editor: library_editor::State,
 }
 
@@ -89,6 +91,7 @@ impl Default for State {
             unifilar: unifilar::State::default(),
             unifilar_browser: unifilar_browser::State::default(),
             unifilar_connections: unifilar_connections::State::default(),
+            unifilar_duplication: unifilar_duplication::State::default(),
             library_editor: library_editor::State::default(),
         }
     }
@@ -128,6 +131,9 @@ pub fn route(app: &mut CadApp, id: &str, params: &Value) -> Option<Result<Value,
     }
     if let Some(result) = library_editor::route(app, id, params) {
         return Some(result);
+    }
+    if ["ui.elettrico.unifilar.duplicate.column", "ui.elettrico.unifilar.duplicate.series", "ui.elettrico.unifilar.duplicate.circuit"].contains(&id) {
+        return Some(unifilar_duplication::command(app, id, params));
     }
     if id == "ui.elettrico.unifilar.circuit.move" {
         return Some(unifilar_circuits::command(app, params));
@@ -261,6 +267,7 @@ pub fn show(app: &mut CadApp, ctx: &egui::Context) {
     project::show(app, ctx);
     unifilar_connections::show(app, ctx);
     unifilar_circuits::show(app, ctx);
+    unifilar_duplication::show(app, ctx);
     calibration::show(app, ctx);
     context::show(app, ctx);
     rooms::show(app, ctx);

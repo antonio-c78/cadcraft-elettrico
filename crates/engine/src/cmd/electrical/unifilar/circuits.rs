@@ -4,7 +4,7 @@ use super::{connections, placement, schema};
 use crate::EngineError;
 use cadcraft_doc::{Drawing, Handle};
 use std::collections::BTreeSet;
-mod scope;
+pub(super) mod scope;
 use std::sync::Mutex;
 const CMD: &str = "electrical.unifilar.circuit.move";
 const APP: &str = "CC_UNIFILARE_DEVICE";

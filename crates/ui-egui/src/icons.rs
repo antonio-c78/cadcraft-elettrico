@@ -15,6 +15,9 @@ pub enum Icon {
     ElectricalEdit,
     ElectricalSymbol,
     ElectricalCatalog,
+    ElectricalColumnCopy,
+    ElectricalColumnArray,
+    ElectricalCircuitCopy,
     New,
     Open,
     Save,
@@ -232,6 +235,30 @@ pub fn paint(p: &Painter, rect: Rect, icon: Icon, dim: bool) {
     let (b, a) = (pen.base, pen.acc);
     use Icon::*;
     match icon {
+        ElectricalColumnCopy | ElectricalColumnArray => {
+            pen.rect(2., 3., 6., 17., b);
+            pen.l(5., 5., 5., 18.);
+            pen.rect(3.5, 7., 3., 3., b);
+            pen.rect(3.5, 13., 3., 3., b);
+            let xs: &[f32] = if icon == ElectricalColumnArray { &[11., 18.] } else { &[14.] };
+            for x in xs {
+                pen.rect(*x, 5., 5., 15., a);
+                pen.la(*x + 2.5, 7., *x + 2.5, 18.);
+            }
+            pen.la(9., 10., 12., 10.);
+            pen.la(10., 8., 12., 10.);
+            pen.la(10., 12., 12., 10.);
+        }
+        ElectricalCircuitCopy => {
+            pen.poly(&[(2., 3.), (8., 3.), (8., 8.), (3., 8.), (3., 20.)], false, b);
+            pen.poly(&[(3., 12.), (9., 12.), (9., 20.)], false, b);
+            pen.rect(1.5, 15., 3., 3., b);
+            pen.rect(7.5, 15., 3., 3., b);
+            pen.poly(&[(15., 6.), (21., 6.), (21., 11.), (16., 11.), (16., 22.)], false, a);
+            pen.poly(&[(16., 15.), (22., 15.), (22., 22.)], false, a);
+            pen.rect(14.5, 17., 3., 3., a);
+            pen.rect(20.5, 17., 3., 3., a);
+        }
         ElectricalCompose | ElectricalEdit => {
             pen.rect(3.0, 6.0, 16.0, 12.0, b);
             pen.l(8.3, 6.0, 8.3, 18.0);

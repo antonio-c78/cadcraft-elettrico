@@ -69,8 +69,11 @@ pub(crate) fn entries(app: &CadApp) -> Vec<Entry> {
             children.push(item("ui.elettrico.unifilar.edit", "Modifica apparecchio..."));
             if connections::has_port(doc, *h, "in") || connections::has_port(doc, *h, "out") {
                 children.push(item("ui.elettrico.unifilar.circuit.move", "Sposta circuito..."));
+                children.push(item("ui.elettrico.unifilar.duplicate.column", "Duplica colonna..."));
+                children.push(item("ui.elettrico.unifilar.duplicate.series", "Serie di colonne..."));
             }
             if connections::has_port(doc, *h, "out") {
+                children.push(item("ui.elettrico.unifilar.duplicate.circuit", "Duplica circuito..."));
                 children.push(item("ui.elettrico.unifilar.link.series", "Collega simboli..."));
                 children.push(item("ui.elettrico.unifilar.link.bus", "Barra di distribuzione..."));
             }
@@ -431,6 +434,31 @@ mod tests {
                 _ => None,
             })
             .collect()
+    }
+    #[test]
+    fn duplication_actions_follow_terminal_capabilities_and_are_not_bulk_actions() {
+        let mut app = CadApp::new(Session::new(), crate::Services::default());
+        let h = add(&mut app, "CC_UNIFILARE_DEVICE");
+        for (ports, circuit) in [(json!([{"id":"in"}]), false), (json!([{"id":"in"},{"id":"out"}]), true)] {
+            app.session
+                .doc_mut()
+                .unwrap()
+                .modify_entity(h, |e| {
+                    e.common.xdata = vec![
+                        RawTag { code: 1001, value: "CC_UNIFILARE_DEVICE".into() },
+                        RawTag { code: 1000, value: json!({"kind":"device","column":1,"ports":ports}).to_string() },
+                    ];
+                })
+                .unwrap();
+            app.session.set_selection(vec![h]);
+            let actions = ids(&app);
+            assert!(actions.contains(&"ui.elettrico.unifilar.duplicate.column".into()));
+            assert!(actions.contains(&"ui.elettrico.unifilar.duplicate.series".into()));
+            assert_eq!(actions.contains(&"ui.elettrico.unifilar.duplicate.circuit".into()), circuit);
+        }
+        let other = add(&mut app, "CC_UNIFILARE_DEVICE");
+        app.session.set_selection(vec![h, other]);
+        assert!(!ids(&app).iter().any(|id| id.starts_with("ui.elettrico.unifilar.duplicate.")));
     }
     #[test]
     fn circuit_move_is_available_for_multiple_devices_and_window_selected_wires() {

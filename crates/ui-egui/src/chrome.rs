@@ -202,6 +202,9 @@ pub fn electrical_tools(app: &mut CadApp, ui: &mut egui::Ui) {
                 (Icon::Blocks, "ui.elettrico.unifilar.symbols", "Inserisci apparecchio unifilare...", true),
                 (Icon::Line, "ui.elettrico.unifilar.link.series", "Collega simboli...", true),
                 (Icon::Move, "ui.elettrico.unifilar.circuit.move", "Sposta circuito...", true),
+                (Icon::ElectricalColumnCopy, "ui.elettrico.unifilar.duplicate.column", "Duplica colonna...", true),
+                (Icon::ElectricalColumnArray, "ui.elettrico.unifilar.duplicate.series", "Serie di colonne...", true),
+                (Icon::ElectricalCircuitCopy, "ui.elettrico.unifilar.duplicate.circuit", "Duplica circuito...", true),
             ],
         ),
         (
