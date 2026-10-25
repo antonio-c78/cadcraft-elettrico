@@ -1495,3 +1495,6 @@ fn section_from_toolbar_needs_one_canvas_click_and_invalid_context_preserves_sel
 
 #[path = "unifilar/duplication.rs"]
 mod duplication;
+
+#[path = "unifilar/attachments.rs"]
+mod attachments;

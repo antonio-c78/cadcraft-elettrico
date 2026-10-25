@@ -5,6 +5,21 @@ use std::collections::BinaryHeap;
 /// Nominal 2.3 mm device label at port Y - 3 leaves exactly this clearance.
 pub(super) const CLEARANCE: f64 = 0.7;
 pub(super) type Rect = [f64; 4];
+/// A short snapped dogleg may still be inside the terminal's clearance padding.
+/// Exempt only that small window; the rest of the symbol remains an obstacle.
+pub(super) fn terminal_escape(a: Vec2, b: Vec2, body: Rect, port: Vec2) -> bool {
+    if !a.is_finite() || !b.is_finite() || !port.is_finite() || body.iter().any(|n| !n.is_finite()) || body[0] >= body[2] || body[1] >= body[3] {
+        return false;
+    }
+    let radius = 2. * CLEARANCE;
+    let left = (port.x - radius).clamp(body[0], body[2]);
+    let right = (port.x + radius).clamp(body[0], body[2]);
+    let bottom = (port.y - radius).clamp(body[1], body[3]);
+    let top = (port.y + radius).clamp(body[1], body[3]);
+    let outside =
+        [[body[0], body[1], left, body[3]], [right, body[1], body[2], body[3]], [left, body[1], right, bottom], [left, top, right, body[3]]];
+    !outside.iter().filter(|r| r[0] < r[2] && r[1] < r[3]).any(|r| blocked(a, b, &[*r]))
+}
 pub(super) fn blocked(a: Vec2, b: Vec2, boxes: &[Rect]) -> bool {
     boxes.iter().any(|r| {
         // Slab clipping works for horizontal, vertical and diagonal segments.

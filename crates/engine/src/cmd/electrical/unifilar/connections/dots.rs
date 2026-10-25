@@ -69,7 +69,7 @@ pub(super) fn rebuild(d: &mut Drawing) -> Result<()> {
                 };
                 if let Some(parent) = parent {
                     let route: Vec<_> = if end { path.iter().rev().copied().collect() } else { path.clone() };
-                    if let Some((_, point)) = contacts::departure(&route, &parent) {
+                    if let Some(point) = contacts::attachment(&route, &parent) {
                         at = point;
                     }
                 }

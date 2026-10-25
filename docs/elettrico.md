@@ -488,3 +488,22 @@ accepts one copy; arrays apply to columns. The UI uses `.duplicate.prepare` and
 interactive `.duplicate.place`. Preview is read-only; publication validates routes,
 creates a pre-change backup and commits one transaction. Geometry, recursion and
 copy counts are bounded. No existing project is rewritten merely by opening it.
+
+
+## Snapped terminal exits and folded trunk contacts
+
+A tiny snapped dogleg next to an apparatus terminal may cross that terminal's
+clearance padding over more than one segment. Validation now permits only a
+small, contiguous escape window (twice the nominal clearance) around the owning
+terminal. The rest of the body, its text and every other object remain obstacles.
+The same rule applies when drawing toward or away from the terminal.
+
+`contacts::attachment` resolves explicit taps at a parent corner that overshoots
+and doubles back. The visible junction belongs at the actual physical T rather
+than at the folded tip. Preview and the stored-dot rebuild share this resolver.
+New or independently editable routes move their attachment to the physical T;
+existing routes with dependents retain their attachment fractions and geometry.
+This redraws their junction correctly without moving downstream connections.
+Ordinary crossings remain unconnected. Regression tests cover both drawing
+directions with a quarter-unit offset, forbidden inward/text crossings, folded
+trunk junctions, deletion and Undo. Opening a drawing alone does not rewrite it.

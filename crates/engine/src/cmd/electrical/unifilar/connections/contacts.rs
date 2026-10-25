@@ -68,10 +68,55 @@ fn fraction(parent: &[Vec2], at: Vec2) -> Result<f64> {
     }
     Err(err("Il punto di separazione non appartiene al filo."))
 }
+fn on_segment(p: Vec2, a: Vec2, b: Vec2) -> bool {
+    let delta = b - a;
+    let len = delta.len();
+    if len < EPS {
+        return p.near(a, EPS);
+    }
+    let t = (p - a).dot(delta) / (len * len);
+    (-EPS..=1. + EPS).contains(&t) && (a + delta * t).near(p, EPS)
+}
+/// A parent may overshoot a corner and double back before entering a device.
+/// When the branch attaches to that retraced tip, its physical T is at the fold,
+/// not at the tip. Only overlapping parent runs qualify, never mere crossings.
+pub(super) fn attachment(path: &[Vec2], parent: &[Vec2]) -> Option<Vec2> {
+    let (_, at) = departure(path, parent)?;
+    let segments: Vec<_> = parent.windows(2).filter(|s| on_segment(at, s[0], s[1])).collect();
+    let mut folds = Vec::new();
+    for (i, a) in segments.iter().enumerate() {
+        for b in segments.iter().skip(i + 1) {
+            if coverage(a[0], a[1], b) <= EPS && coverage(b[0], b[1], a) <= EPS {
+                continue;
+            }
+            for p in [a[0], a[1], b[0], b[1]] {
+                if !on_segment(p, a[0], a[1]) || !on_segment(p, b[0], b[1]) || folds.iter().any(|q: &Vec2| q.near(p, EPS)) {
+                    continue;
+                }
+                let mut rays = Vec::<Vec2>::new();
+                for s in parent.windows(2).filter(|s| on_segment(p, s[0], s[1])) {
+                    for end in s {
+                        let delta = *end - p;
+                        if delta.len() > EPS {
+                            let ray = delta / delta.len();
+                            if !rays.iter().any(|r| r.near(ray, EPS)) {
+                                rays.push(ray);
+                            }
+                        }
+                    }
+                }
+                if rays.len() >= 3 {
+                    folds.push(p);
+                }
+            }
+        }
+    }
+    folds.into_iter().min_by(|a, b| a.dist(at).total_cmp(&b.dist(at))).or(Some(at))
+}
 pub(super) fn junction(env: &Env, tap: &Tap, path: &[Vec2], end: bool) -> Result<Vec2> {
     let parent = env.tap_path(tap)?;
     let reversed: Vec<_> = if end { path.iter().rev().copied().collect() } else { path.to_vec() };
-    departure(&reversed, &parent).map(|(_, at)| at).ok_or_else(|| err("Percorso vuoto."))
+    attachment(&reversed, &parent).ok_or_else(|| err("Percorso vuoto."))
 }
 /// Normalize only when the caller has established that no downstream anchors can be lost.
 pub(super) fn normalize(env: &Env, link: &Link, path: Vec<Vec2>) -> Result<Link> {
@@ -95,6 +140,14 @@ pub(super) fn normalize(env: &Env, link: &Link, path: Vec<Vec2>) -> Result<Link>
         {
             tap.fraction = fraction(&parent, at)?;
             path = std::iter::once(at).chain(path.into_iter().skip(index)).collect();
+            path = routing::simplify(path);
+            changed = true;
+        }
+        if let Some(at) = attachment(&path, &parent)
+            && path.first().is_some_and(|p| !p.near(at, EPS))
+        {
+            tap.fraction = fraction(&parent, at)?;
+            path.insert(0, at);
             path = routing::simplify(path);
             changed = true;
         }
@@ -152,5 +205,12 @@ mod tests {
         assert_eq!(departure(&[v(0., 5.), v(5., 5.)], &parent), Some((0, v(0., 5.))));
         assert_eq!(departure(&[v(0.01, 5.), v(0.01, 8.)], &parent), Some((0, v(0.01, 5.))));
         assert_eq!(coverage(v(0., 2.), v(0., 10.), &[v(0., 0.), v(0., 4.), v(8., 4.), v(8., 7.), v(0., 7.), v(0., 10.)]), 0.25);
+    }
+    #[test]
+    fn attachment_finds_fold_junction_without_joining_an_unrelated_crossing() {
+        let parent = [v(0., 0.), v(0., 10.), v(10.4, 10.), v(10., 10.), v(10., 0.)];
+        assert_eq!(attachment(&[v(10.4, 10.), v(20., 10.)], &parent), Some(v(10., 10.)));
+        let ordinary = [v(0., 0.), v(0., 10.), v(10., 10.), v(10., 0.)];
+        assert_eq!(attachment(&[v(5., 10.), v(5., 20.)], &ordinary), Some(v(5., 10.)));
     }
 }

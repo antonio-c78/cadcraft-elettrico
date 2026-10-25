@@ -130,10 +130,20 @@ impl Env {
                 .boxes
                 .iter()
                 .filter(|o| {
-                    // Only the terminal leg can escape its owning symbol's envelope.
-                    !(o.body
-                        && ((i == 0 && l.from.as_ref().is_some_and(|p| handle(&p.handle).ok() == Some(o.owner)))
-                            || (i + 2 == path.len() && l.to.as_ref().is_some_and(|p| handle(&p.handle).ok() == Some(o.owner)))))
+                    let near = |p: &Vec2, terminal: Vec2| {
+                        (p.x - terminal.x).abs() <= 2. * routing::CLEARANCE && (p.y - terminal.y).abs() <= 2. * routing::CLEARANCE
+                    };
+                    let start_escape = l.from.as_ref().is_some_and(|p| handle(&p.handle).ok() == Some(o.owner))
+                        && path.get(..=i).is_some_and(|points| points.iter().all(|p| near(p, a)))
+                        && routing::terminal_escape(segment[0], segment[1], o.rect, a);
+                    let end_escape = l.to.as_ref().is_some_and(|p| handle(&p.handle).ok() == Some(o.owner))
+                        && path.get(i + 1..).is_some_and(|points| points.iter().all(|p| near(p, b)))
+                        && routing::terminal_escape(segment[0], segment[1], o.rect, b);
+                    // Preserve terminal-leg handling, including provisional reference labels.
+                    // Additional tiny doglegs can escape only through the terminal window.
+                    let first_leg = i == 0 && l.from.as_ref().is_some_and(|p| handle(&p.handle).ok() == Some(o.owner));
+                    let last_leg = i + 2 == path.len() && l.to.as_ref().is_some_and(|p| handle(&p.handle).ok() == Some(o.owner));
+                    !(o.body && (start_escape || end_escape || first_leg || last_leg))
                 })
                 .map(|o| o.rect)
                 .collect();
